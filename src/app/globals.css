@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #14201c;
+  --color-ink-soft: #3d4a44;
+  --color-ink-muted: #6b776f;
+  --color-parchment: #f6f2e9;
+  --color-parchment-deep: #ece6d8;
+  --color-cream: #fffdf8;
+  --color-line: #e2dccd;
+  --color-pine: #1f3d33;
+  --color-pine-deep: #16241f;
+  --color-sage: #6f8f7f;
+  --color-gold: #b5852c;
+  --color-gold-soft: #f3e4c2;
+  --color-clay: #b9603b;
+  --color-lilac: #7a6ca8;
+
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia,
+    ui-serif, serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+
+  --shadow-card: 0 1px 2px rgba(20, 32, 28, 0.04), 0 12px 32px -18px rgba(20, 32, 28, 0.25);
+  --shadow-lift: 0 2px 4px rgba(20, 32, 28, 0.05), 0 24px 48px -24px rgba(20, 32, 28, 0.3);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-parchment);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+
+  ::selection {
+    background: var(--color-gold-soft);
+    color: var(--color-ink);
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--color-pine);
+    outline-offset: 2px;
+  }
+}
+
+@utility font-display {
+  font-family: var(--font-display);
+}
+
+@utility text-balance {
+  text-wrap: balance;
+}
+
+@utility grain {
+  background-image: radial-gradient(rgba(20, 32, 28, 0.055) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+@utility card-surface {
+  background: var(--color-cream);
+  border: 1px solid var(--color-line);
+  border-radius: 1.25rem;
+  box-shadow: var(--shadow-card);
+}
+
+@utility prose-scripture {
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
+  line-height: 1.85;
+  color: var(--color-ink);
+}
+
+@keyframes lumen-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes lumen-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes lumen-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-rise {
+  animation: lumen-rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-fade {
+  animation: lumen-fade 0.5s ease-out both;
+}
+
+.animate-glow {
+  animation: lumen-pulse 6s ease-in-out infinite;
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #eae5d9;
+  border-radius: 0.75rem;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 253, 248, 0.75), transparent);
+  animation: shimmer 1.6s infinite;
+}
+
+.scroll-fade {
+  scrollbar-width: thin;
+  scrollbar-color: #cfc8b7 transparent;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+/* Hide number input spinners for tidy small forms */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
