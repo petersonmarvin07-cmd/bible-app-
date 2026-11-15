@@ -54,14 +54,17 @@ export async function getSessionUser(): Promise<User | null> {
   try {
     const store = await cookies().catch(() => null);
     const token = store?.get(SESSION_COOKIE)?.value;
+
     if (!token) return null;
-    const rows = await db
+
+    const [row] = await db
       .select({ user: users })
       .from(sessions)
       .innerJoin(users, eq(users.id, sessions.userId))
       .where(and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())))
       .limit(1);
-    return rows[0]?.user ?? null;
+
+    return row?.user ?? null;
   } catch (error) {
     console.error("getSessionUser failed", error);
     return null;
@@ -72,14 +75,19 @@ export async function getCurrentUser(): Promise<User | null> {
   const sessionUser = await getSessionUser();
   if (sessionUser) return sessionUser;
 
-  // Resilient fallback for previews, iframes, and first-time loads:
-  // Return the seeded demo household so the dashboard is immediately live and interactive.
+  const isDemoAllowed =
+    process.env.NODE_ENV !== "production" &&
+    process.env.ENABLE_DEMO_AUTH === "true";
+
+  if (!isDemoAllowed) return null;
+
   try {
     const [demo] = await db
       .select()
       .from(users)
       .where(eq(users.email, "grace@lumen.app"))
       .limit(1);
+
     if (demo) return demo;
 
     const [first] = await db.select().from(users).limit(1);
@@ -92,18 +100,31 @@ export async function getCurrentUser(): Promise<User | null> {
 
 export async function requireUser(): Promise<User> {
   let user = await getCurrentUser();
+
   if (!user) {
-    // If table wasn't seeded yet, seed and retry once
-    const { ensureSeeded } = await import("@/lib/seed");
-    await ensureSeeded();
+    try {
+      const { ensureSeeded } = await import("@/lib/seed");
+      await ensureSeeded();
+    } catch (error) {
+      console.error("ensureSeeded failed", error);
+    }
+
     user = await getCurrentUser();
   }
+
   if (!user) {
-    redirect("/login");
+    throw redirect("/login");
   }
+
   return user;
 }
 
-export async function requireApiUser(): Promise<User | null> {
-  return getCurrentUser();
+export async function requireApiUser(): Promise<User> {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    throw new Error("Unauthorized");
+  }
+
+  return user;
 }
