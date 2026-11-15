@@ -481,36 +481,59 @@ export const SEED_PASSAGES: SeedPassage[] = [
   },
 ];
 
-const DEMO_EMAIL = "grace@lumen.app";
-const DEMO_PASSWORD = "lumen123";
+const DEMO_EMAIL = process.env.DEMO_EMAIL ?? "grace@lumen.app";
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD ?? "lumen123";
 
 let seedPromise: Promise<void> | null = null;
 
 export function ensureSeeded() {
   seedPromise ??= runSeed().catch((cause) => {
     seedPromise = null;
-    console.error("Lumen seed skipped:", cause instanceof Error ? cause.message : cause);
+    console.error("Lumen seed failed:", cause instanceof Error ? cause.message : cause);
+    throw cause;
   });
+
   return seedPromise;
 }
 
 async function runSeed() {
   const client = await pool.connect();
+
   try {
-    // Advisory lock keeps concurrent requests from double-seeding.
-    await client.query("select pg_advisory_lock(918273645)");
-    const existing = await db.select({ id: users.id }).from(users).limit(1);
-    const bibleCountRes = await client.query("SELECT count(*)::int as count FROM bible_verses");
+    await client.query("SELECT pg_advisory_lock(918273645)");
+
+    const existingUser = await db
+      .select({ id: users.id })
+      .from(users)
+      .limit(1);
+
+    const bibleCountRes = await client.query(
+      "SELECT count(*)::int AS count FROM bible_verses"
+    );
     const bibleVersesCount = bibleCountRes.rows[0]?.count ?? 0;
+
+    if (!existingUser.length) {
+      // create demo user if needed
+      // await db.insert(users).values({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
+    }
 
     if (bibleVersesCount === 0) {
       try {
         const { execSync } = await import("node:child_process");
-        execSync("node scripts/seed-bible.cjs", { stdio: "inherit" });
+        execSync("node scripts/seed-bible.cjs", {
+          stdio: "inherit",
+          env: process.env,
+        });
       } catch (err) {
         console.error("Failed to seed entire bible:", err);
+        throw err;
       }
     }
+  } finally {
+    await client.query("SELECT pg_advisory_unlock(918273645)");
+    client.release();
+  }
+}
 
     if (existing.length > 0) return;
 
