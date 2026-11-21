@@ -253,7 +253,6 @@ export function Faithprint({
               </p>
             </div>
           )}
-          {error ? <Notice message={error} /> : null}
         </div>
       </div>
     </div>

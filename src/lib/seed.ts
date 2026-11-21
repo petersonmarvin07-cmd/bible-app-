@@ -1,9 +1,14 @@
 import "server-only";
 
-import { sql } from "drizzle-orm";
+import fs from "node:fs";
+import path from "node:path";
+import { eq, sql } from "drizzle-orm";
 
-import { db, pool } from "@/db";
+import { db, getDbKind, pool } from "@/db";
 import {
+  bibleBooks,
+  bibleVerses,
+  canonicalProgress,
   collections,
   familyMembers,
   journalEntries,
@@ -18,6 +23,7 @@ import {
   wonders,
 } from "@/db/schema";
 import { hashPassword } from "@/lib/auth";
+import { BIBLE_BOOKS_CATALOG } from "@/lib/bible-data";
 
 type Band = "little" | "explorer" | "youth" | "grown";
 
@@ -502,450 +508,618 @@ async function runSeed() {
   try {
     await client.query("SELECT pg_advisory_lock(918273645)");
 
-    const existingUser = await db
+    const existing = await db
       .select({ id: users.id })
       .from(users)
+      .where(eq(users.email, DEMO_EMAIL))
       .limit(1);
 
-    const bibleCountRes = await client.query(
-      "SELECT count(*)::int AS count FROM bible_verses"
-    );
-    const bibleVersesCount = bibleCountRes.rows[0]?.count ?? 0;
+    if (existing.length === 0) {
+      const passageIdBySlug = new Map<string, string>();
 
-    if (!existingUser.length) {
-      // create demo user if needed
-      // await db.insert(users).values({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
-    }
+      for (const [index, item] of SEED_PASSAGES.entries()) {
+        const inserted = await db
+          .insert(passages)
+          .values({
+            slug: item.slug,
+            reference: item.reference,
+            book: item.book,
+            chapter: item.chapter,
+            verseStart: item.verseStart,
+            verseEnd: item.verseEnd,
+            theme: item.theme,
+            testament: item.testament,
+            reflectionPrompt: item.reflectionPrompt,
+            sortOrder: index,
+          })
+          .onConflictDoNothing({ target: passages.slug })
+          .returning({ id: passages.id });
 
-    if (bibleVersesCount === 0) {
-      try {
-        const { execSync } = await import("node:child_process");
-        execSync("node scripts/seed-bible.cjs", {
-          stdio: "inherit",
-          env: process.env,
-        });
-      } catch (err) {
-        console.error("Failed to seed entire bible:", err);
-        throw err;
+        let passageId = inserted[0]?.id;
+        if (!passageId) {
+          const found = await db
+            .select({ id: passages.id })
+            .from(passages)
+            .where(sql`${passages.slug} = ${item.slug}`)
+            .limit(1);
+          passageId = found[0]?.id;
+        }
+        if (!passageId) continue;
+        passageIdBySlug.set(item.slug, passageId);
+
+        const versionRows = (Object.keys(item.versions) as Band[]).map((band) => ({
+          passageId: passageId as string,
+          band,
+          title: item.versions[band].title,
+          body: item.versions[band].body,
+          takeaway: item.versions[band].takeaway,
+          wonderQuestion: item.versions[band].wonder,
+        }));
+        await db
+          .insert(passageVersions)
+          .values(versionRows)
+          .onConflictDoNothing({ target: [passageVersions.passageId, passageVersions.band] });
       }
-    }
-  } finally {
-    await client.query("SELECT pg_advisory_unlock(918273645)");
-    client.release();
-  }
-}
 
-    if (existing.length > 0) return;
-
-    const passageIdBySlug = new Map<string, string>();
-
-    for (const [index, item] of SEED_PASSAGES.entries()) {
-      const inserted = await db
-        .insert(passages)
+      const [demo] = await db
+        .insert(users)
         .values({
-          slug: item.slug,
-          reference: item.reference,
-          book: item.book,
-          chapter: item.chapter,
-          verseStart: item.verseStart,
-          verseEnd: item.verseEnd,
-          theme: item.theme,
-          testament: item.testament,
-          reflectionPrompt: item.reflectionPrompt,
-          sortOrder: index,
+          email: DEMO_EMAIL,
+          name: "Grace Okafor",
+          passwordHash: hashPassword(DEMO_PASSWORD),
+          householdName: "The Okafor Family",
+          avatarEmoji: "🌿",
+          homeBand: "grown",
+          streakCount: 12,
         })
-        .onConflictDoNothing()
-        .returning({ id: passages.id });
+        .onConflictDoNothing({ target: users.email })
+        .returning();
 
-      let passageId = inserted[0]?.id;
-      if (!passageId) {
-        const found = await db
-          .select({ id: passages.id })
-          .from(passages)
-          .where(sql`${passages.slug} = ${item.slug}`)
-          .limit(1);
-        passageId = found[0]?.id;
+      if (demo) {
+        const uid = demo.id;
+        const pid = (slug: string) => passageIdBySlug.get(slug) ?? null;
+        const daysAgo = (days: number, hour = 7) => {
+          const date = new Date();
+          date.setUTCDate(date.getUTCDate() - days);
+          date.setUTCHours(hour, 15, 0, 0);
+          return date;
+        };
+
+        await db.insert(familyMembers).values([
+          { userId: uid, name: "Grace", band: "grown", emoji: "🌿", role: "parent", streak: 12 },
+          { userId: uid, name: "Noah", band: "youth", emoji: "🎧", role: "child", streak: 6 },
+          { userId: uid, name: "Ada", band: "explorer", emoji: "🦋", role: "child", streak: 9 },
+          { userId: uid, name: "Tunde", band: "little", emoji: "🐢", role: "child", streak: 4 },
+          { userId: uid, name: "Mum Bisi", band: "grown", emoji: "🫖", role: "grandparent", streak: 21 },
+        ]);
+
+        const collectionRows = await db
+          .insert(collections)
+          .values([
+            {
+              userId: uid,
+              name: "Anchors for Anxious Days",
+              description: "Verses I return to when my chest gets tight.",
+              emoji: "⚓",
+              accent: "sage",
+            },
+            {
+              userId: uid,
+              name: "Bedtime with Tunde",
+              description: "Short and gentle for a five-year-old at 7:15pm.",
+              emoji: "🌙",
+              accent: "amber",
+            },
+            {
+              userId: uid,
+              name: "Words for the Hard Weeks",
+              description: "For the seasons that ask more than I have.",
+              emoji: "🕯️",
+              accent: "sky",
+            },
+          ])
+          .returning();
+
+        const [anchors, bedtime, hardWeeks] = collectionRows;
+        if (anchors && bedtime && hardWeeks) {
+          await db.insert(savedVerses).values([
+            {
+              collectionId: anchors.id,
+              userId: uid,
+              reference: "Philippians 4:6–7",
+              text: "Do not be anxious about anything, but in every situation, by prayer and petition, with thanksgiving, present your requests to God.",
+              note: "The guard post around my mind.",
+              createdAt: daysAgo(2, 8),
+            },
+            {
+              collectionId: anchors.id,
+              userId: uid,
+              reference: "Psalm 23:1–4",
+              text: "The Lord is my shepherd; I shall not want. Even though I walk through the darkest valley, I will fear no evil, for you are with me.",
+              note: "Read at 3am. It worked.",
+              createdAt: daysAgo(5, 3),
+            },
+            {
+              collectionId: anchors.id,
+              userId: uid,
+              reference: "Matthew 11:28–30",
+              text: "Come to me, all you who are weary and burdened, and I will give you rest.",
+              note: "",
+              createdAt: daysAgo(9, 21),
+            },
+            {
+              collectionId: bedtime.id,
+              userId: uid,
+              reference: "Genesis 1:1–5",
+              text: "In the beginning God created the heavens and the earth... and God said, let there be light.",
+              note: "Tunde's favourite. He shouts LIGHT!",
+              createdAt: daysAgo(3, 19),
+            },
+            {
+              collectionId: bedtime.id,
+              userId: uid,
+              reference: "Psalm 139:13–14",
+              text: "For you created my inmost being; you knit me together in my mother's womb. I praise you because I am fearfully and wonderfully made.",
+              note: "Ada asked if God used knitting needles.",
+              createdAt: daysAgo(7, 19),
+            },
+            {
+              collectionId: hardWeeks.id,
+              userId: uid,
+              reference: "Isaiah 40:28–31",
+              text: "Those who hope in the Lord will renew their strength. They will soar on wings like eagles.",
+              note: "For the week after the diagnosis.",
+              createdAt: daysAgo(14, 6),
+            },
+            {
+              collectionId: hardWeeks.id,
+              userId: uid,
+              reference: "Proverbs 3:5–6",
+              text: "Trust in the Lord with all your heart and lean not on your own understanding.",
+              note: "",
+              createdAt: daysAgo(16, 6),
+            },
+            {
+              collectionId: hardWeeks.id,
+              userId: uid,
+              reference: "Ruth 1:16–17",
+              text: "Where you go I will go, and where you stay I will stay. Your people will be my people and your God my God.",
+              note: "Mum Bisi, always.",
+              createdAt: daysAgo(18, 9),
+            },
+          ]);
+        }
+
+        const planRows = await db
+          .insert(readingPlans)
+          .values([
+            {
+              userId: uid,
+              title: "7 Days of Brave",
+              description: "One week of courage for Noah and Ada to read together at breakfast.",
+              band: "explorer",
+              isActive: true,
+              createdAt: daysAgo(11),
+            },
+            {
+              userId: uid,
+              title: "Family Table Psalms",
+              description: "Five evenings, five psalms, five questions around the table.",
+              band: "family",
+              isActive: false,
+              createdAt: daysAgo(20),
+            },
+          ])
+          .returning();
+
+        const [brave, tablePsalms] = planRows;
+        if (brave) {
+          const braveSlugs = [
+            "1-samuel-17",
+            "isaiah-40",
+            "matthew-5",
+            "proverbs-3",
+            "ruth-1",
+            "luke-15",
+            "psalm-139",
+          ];
+          await db.insert(planDays).values(
+            braveSlugs.map((slug, index) => ({
+              planId: brave.id,
+              dayNumber: index + 1,
+              title: index === 0 ? "Start with the sling" : `Day ${index + 1}: ${SEED_PASSAGES.find((p) => p.slug === slug)?.theme ?? "Read"}`,
+              passageId: pid(slug),
+              completed: index < 3,
+              completedAt: index < 3 ? daysAgo(3 - index, 7) : null,
+            })),
+          );
+        }
+        if (tablePsalms) {
+          const psalmSlugs = ["psalm-23", "psalm-139", "matthew-11", "john-3", "philippians-4"];
+          await db.insert(planDays).values(
+            psalmSlugs.map((slug, index) => ({
+              planId: tablePsalms.id,
+              dayNumber: index + 1,
+              title: `Evening ${index + 1}: ${SEED_PASSAGES.find((p) => p.slug === slug)?.theme ?? "Read"}`,
+              passageId: pid(slug),
+              completed: index < 5,
+              completedAt: daysAgo(20 - index, 19),
+            })),
+          );
+        }
+
+        await db.insert(journalEntries).values([
+          {
+            userId: uid,
+            title: "Learning to stop at 3am",
+            body: "I have read Philippians 4 a hundred times and still reached for my phone before I reached for prayer. Tonight I tried it the other way around. I wrote down the one thing I was afraid of, said it out loud, and thanked God for three things I could actually see. The fear didn't vanish. But it got smaller than the room.",
+            mood: "heavy",
+            passageId: pid("philippians-4"),
+            sharing: "family",
+            createdAt: daysAgo(1, 3),
+            updatedAt: daysAgo(1, 3),
+          },
+          {
+            userId: uid,
+            title: "Ada asked who knit me",
+            body: "We read Psalm 139 at bedtime and Ada wanted to know if God used knitting needles or a sewing machine. Then she said, \"So my freckles were on purpose?\" I want to keep that question somewhere I can find it on the days I forget.",
+            mood: "joyful",
+            passageId: pid("psalm-139"),
+            sharing: "family",
+            createdAt: daysAgo(4, 20),
+            updatedAt: daysAgo(4, 20),
+          },
+          {
+            userId: uid,
+            title: "The week I carried the wrong yoke",
+            body: "Matthew 11 keeps correcting me. I have been treating rest like a reward I earn after the list is finished. But the invitation comes before the work is done — come, all who are weary. I am trying to put down the thing that was never mine to carry: the outcome of everyone else's choices.",
+            mood: "hopeful",
+            passageId: pid("matthew-11"),
+            sharing: "private",
+            createdAt: daysAgo(6, 7),
+            updatedAt: daysAgo(6, 7),
+          },
+          {
+            userId: uid,
+            title: "Noah's giant",
+            body: "Noah told me after school that he took off the armor — he stopped pretending he was fine in front of his friends. He said David's story made him feel less weird about being scared. I forget that the same words we give the little ones are working on the big ones too.",
+            mood: "grateful",
+            passageId: pid("1-samuel-17"),
+            sharing: "family",
+            createdAt: daysAgo(10, 22),
+            updatedAt: daysAgo(10, 22),
+          },
+          {
+            userId: uid,
+            title: "A promise with shoes on",
+            body: "Visited Mum Bisi today. She reminded me that Ruth didn't wait for a formal invitation — she just stayed. I want to be that kind of friend, the kind that shows up without needing to be asked. Note to self: call Sarah this week.",
+            mood: "peaceful",
+            passageId: pid("ruth-1"),
+            sharing: "private",
+            createdAt: daysAgo(16, 18),
+            updatedAt: daysAgo(16, 18),
+          },
+        ]);
+
+        await db.insert(prayers).values([
+          {
+            userId: uid,
+            authorName: "Grace",
+            body: "For Noah's exams next week — that he would remember he is loved regardless of a score.",
+            category: "family",
+            isAnswered: false,
+            answeredNote: "",
+            prayedCount: 14,
+            createdAt: daysAgo(2, 7),
+          },
+          {
+            userId: uid,
+            authorName: "Mum Bisi",
+            body: "Thank you for 63 years of mornings. Let me use the rest of them well.",
+            category: "gratitude",
+            isAnswered: true,
+            answeredNote: "Every morning since has arrived with something to be thankful for.",
+            prayedCount: 31,
+            createdAt: daysAgo(9, 6),
+          },
+          {
+            userId: uid,
+            authorName: "Ada",
+            body: "Please help my friend Lila's dog to feel better, and help me not be scared of the dark.",
+            category: "everyday",
+            isAnswered: false,
+            answeredNote: "",
+            prayedCount: 8,
+            createdAt: daysAgo(3, 20),
+          },
+          {
+            userId: uid,
+            authorName: "Grace",
+            body: "For steady hands at work and a softer voice at home. I can't do both without help.",
+            category: "provision",
+            isAnswered: false,
+            answeredNote: "",
+            prayedCount: 5,
+            createdAt: daysAgo(5, 13),
+          },
+        ]);
+
+        await db.insert(wonders).values([
+          {
+            userId: uid,
+            askedBy: "Ada",
+            askedAge: 8,
+            question: "If God spoke the light into being, why did God need to say it out loud? Couldn't God just think it?",
+            answer: "That's a brilliant question. Maybe saying it out loud is God inviting us into the story — the way you say \"I love you\" instead of just thinking it.",
+            answeredBy: "Grace",
+            status: "answered",
+            createdAt: daysAgo(4, 20),
+          },
+          {
+            userId: uid,
+            askedBy: "Tunde",
+            askedAge: 5,
+            question: "Is the shepherd stronger than the big dark?",
+            answer: "Yes. The dark is big, but the shepherd is closer than the dark, and he never lets go of you.",
+            answeredBy: "Grace",
+            status: "answered",
+            createdAt: daysAgo(6, 19),
+          },
+          {
+            userId: uid,
+            askedBy: "Noah",
+            askedAge: 15,
+            question: "How do you know when it's God's direction and not just your own preference?",
+            answer: "",
+            answeredBy: "",
+            status: "open",
+            createdAt: daysAgo(1, 21),
+          },
+          {
+            userId: uid,
+            askedBy: "Ada",
+            askedAge: 8,
+            question: "Does God have a favourite colour? Because I think it might be sunset.",
+            answer: "",
+            answeredBy: "",
+            status: "open",
+            createdAt: daysAgo(1, 18),
+          },
+        ]);
+
+        const logPlan: Array<[number, string, string]> = [
+          [0, "philippians-4", "grown"],
+          [1, "philippians-4", "grown"],
+          [2, "psalm-23", "little"],
+          [3, "psalm-139", "explorer"],
+          [4, "matthew-11", "grown"],
+          [5, "genesis-1", "little"],
+          [6, "proverbs-3", "grown"],
+          [7, "matthew-5", "youth"],
+          [9, "isaiah-40", "grown"],
+          [10, "1-samuel-17", "youth"],
+          [11, "john-3", "grown"],
+          [12, "luke-15", "explorer"],
+          [13, "ruth-1", "grown"],
+          [15, "psalm-23", "little"],
+          [16, "isaiah-40", "grown"],
+          [17, "genesis-1", "little"],
+          [18, "matthew-11", "grown"],
+          [20, "john-3", "grown"],
+          [21, "philippians-4", "grown"],
+        ];
+
+        const logRows = logPlan
+          .map(([offset, slug, band]) => {
+            const passageId = pid(slug);
+            return passageId
+              ? { userId: uid, passageId, band, createdAt: daysAgo(offset, 6 + (offset % 5)) }
+              : null;
+          })
+          .filter((row): row is { userId: string; passageId: string; band: string; createdAt: Date } =>
+            Boolean(row),
+          );
+
+        if (logRows.length > 0) {
+          await db.insert(readingLog).values(logRows);
+        }
+
+        const sampleChapters: [number, number][] = [
+          [1, 1], [1, 2], [1, 3],
+          [19, 23], [19, 139],
+          [20, 3],
+          [23, 40],
+          [40, 5], [40, 6], [40, 7],
+          [42, 15],
+          [43, 1], [43, 3],
+          [50, 4],
+          [66, 21], [66, 22],
+        ];
+        await db
+          .insert(bibleBooks)
+          .values(
+            BIBLE_BOOKS_CATALOG.map((meta) => ({
+              id: meta.id,
+              osis: meta.osis,
+              name: meta.name,
+              testament: meta.testament,
+              division: meta.division,
+              chapterCount: meta.chapterCount,
+              verseCount: meta.verseCount,
+              summary: meta.summary,
+              theme: meta.theme,
+            })),
+          )
+          .onConflictDoNothing({ target: bibleBooks.id });
+
+        await db
+          .insert(canonicalProgress)
+          .values(
+            sampleChapters.map(([bookId, chapter]) => ({
+              userId: uid,
+              bookId,
+              chapter,
+            })),
+          )
+          .onConflictDoNothing({
+            target: [
+              canonicalProgress.userId,
+              canonicalProgress.bookId,
+              canonicalProgress.chapter,
+            ],
+          });
       }
-      if (!passageId) continue;
-      passageIdBySlug.set(item.slug, passageId);
-
-      const versionRows = (Object.keys(item.versions) as Band[]).map((band) => ({
-        passageId: passageId as string,
-        band,
-        title: item.versions[band].title,
-        body: item.versions[band].body,
-        takeaway: item.versions[band].takeaway,
-        wonderQuestion: item.versions[band].wonder,
-      }));
-      await db.insert(passageVersions).values(versionRows).onConflictDoNothing();
     }
 
-    const [demo] = await db
-      .insert(users)
-      .values({
-        email: DEMO_EMAIL,
-        name: "Grace Okafor",
-        passwordHash: hashPassword(DEMO_PASSWORD),
-        householdName: "The Okafor Family",
-        avatarEmoji: "🌿",
-        homeBand: "grown",
-        streakCount: 12,
-      })
-      .returning();
-
-    if (!demo) return;
-    const uid = demo.id;
-    const pid = (slug: string) => passageIdBySlug.get(slug) ?? null;
-    const daysAgo = (days: number, hour = 7) => {
-      const date = new Date();
-      date.setUTCDate(date.getUTCDate() - days);
-      date.setUTCHours(hour, 15, 0, 0);
-      return date;
-    };
-
-    await db.insert(familyMembers).values([
-      { userId: uid, name: "Grace", band: "grown", emoji: "🌿", role: "parent", streak: 12 },
-      { userId: uid, name: "Noah", band: "youth", emoji: "🎧", role: "child", streak: 6 },
-      { userId: uid, name: "Ada", band: "explorer", emoji: "🦋", role: "child", streak: 9 },
-      { userId: uid, name: "Tunde", band: "little", emoji: "🐢", role: "child", streak: 4 },
-      { userId: uid, name: "Mum Bisi", band: "grown", emoji: "🫖", role: "grandparent", streak: 21 },
-    ]);
-
-    const collectionRows = await db
-      .insert(collections)
-      .values([
-        {
-          userId: uid,
-          name: "Anchors for Anxious Days",
-          description: "Verses I return to when my chest gets tight.",
-          emoji: "⚓",
-          accent: "sage",
-        },
-        {
-          userId: uid,
-          name: "Bedtime with Tunde",
-          description: "Short and gentle for a five-year-old at 7:15pm.",
-          emoji: "🌙",
-          accent: "amber",
-        },
-        {
-          userId: uid,
-          name: "Words for the Hard Weeks",
-          description: "For the seasons that ask more than I have.",
-          emoji: "🕯️",
-          accent: "sky",
-        },
-      ])
-      .returning();
-
-    const [anchors, bedtime, hardWeeks] = collectionRows;
-    if (anchors && bedtime && hardWeeks) {
-      await db.insert(savedVerses).values([
-        {
-          collectionId: anchors.id,
-          userId: uid,
-          reference: "Philippians 4:6–7",
-          text: "Do not be anxious about anything, but in every situation, by prayer and petition, with thanksgiving, present your requests to God.",
-          note: "The guard post around my mind.",
-          createdAt: daysAgo(2, 8),
-        },
-        {
-          collectionId: anchors.id,
-          userId: uid,
-          reference: "Psalm 23:1–4",
-          text: "The Lord is my shepherd; I shall not want. Even though I walk through the darkest valley, I will fear no evil, for you are with me.",
-          note: "Read at 3am. It worked.",
-          createdAt: daysAgo(5, 3),
-        },
-        {
-          collectionId: anchors.id,
-          userId: uid,
-          reference: "Matthew 11:28–30",
-          text: "Come to me, all you who are weary and burdened, and I will give you rest.",
-          note: "",
-          createdAt: daysAgo(9, 21),
-        },
-        {
-          collectionId: bedtime.id,
-          userId: uid,
-          reference: "Genesis 1:1–5",
-          text: "In the beginning God created the heavens and the earth... and God said, let there be light.",
-          note: "Tunde's favourite. He shouts LIGHT!",
-          createdAt: daysAgo(3, 19),
-        },
-        {
-          collectionId: bedtime.id,
-          userId: uid,
-          reference: "Psalm 139:13–14",
-          text: "For you created my inmost being; you knit me together in my mother's womb. I praise you because I am fearfully and wonderfully made.",
-          note: "Ada asked if God used knitting needles.",
-          createdAt: daysAgo(7, 19),
-        },
-        {
-          collectionId: hardWeeks.id,
-          userId: uid,
-          reference: "Isaiah 40:28–31",
-          text: "Those who hope in the Lord will renew their strength. They will soar on wings like eagles.",
-          note: "For the week after the diagnosis.",
-          createdAt: daysAgo(14, 6),
-        },
-        {
-          collectionId: hardWeeks.id,
-          userId: uid,
-          reference: "Proverbs 3:5–6",
-          text: "Trust in the Lord with all your heart and lean not on your own understanding.",
-          note: "",
-          createdAt: daysAgo(16, 6),
-        },
-        {
-          collectionId: hardWeeks.id,
-          userId: uid,
-          reference: "Ruth 1:16–17",
-          text: "Where you go I will go, and where you stay I will stay. Your people will be my people and your God my God.",
-          note: "Mum Bisi, always.",
-          createdAt: daysAgo(18, 9),
-        },
-      ]);
-    }
-
-    const planRows = await db
-      .insert(readingPlans)
-      .values([
-        {
-          userId: uid,
-          title: "7 Days of Brave",
-          description: "One week of courage for Noah and Ada to read together at breakfast.",
-          band: "explorer",
-          isActive: true,
-          createdAt: daysAgo(11),
-        },
-        {
-          userId: uid,
-          title: "Family Table Psalms",
-          description: "Five evenings, five psalms, five questions around the table.",
-          band: "family",
-          isActive: false,
-          createdAt: daysAgo(20),
-        },
-      ])
-      .returning();
-
-    const [brave, tablePsalms] = planRows;
-    if (brave) {
-      const braveSlugs = [
-        "1-samuel-17",
-        "isaiah-40",
-        "matthew-5",
-        "proverbs-3",
-        "ruth-1",
-        "luke-15",
-        "psalm-139",
-      ];
-      await db.insert(planDays).values(
-        braveSlugs.map((slug, index) => ({
-          planId: brave.id,
-          dayNumber: index + 1,
-          title: index === 0 ? "Start with the sling" : `Day ${index + 1}: ${SEED_PASSAGES.find((p) => p.slug === slug)?.theme ?? "Read"}`,
-          passageId: pid(slug),
-          completed: index < 3,
-          completedAt: index < 3 ? daysAgo(3 - index, 7) : null,
-        })),
+    if (getDbKind() !== "pg-mem") {
+      const bibleCountRes = await client.query(
+        "SELECT count(*)::int AS count FROM bible_verses",
       );
-    }
-    if (tablePsalms) {
-      const psalmSlugs = ["psalm-23", "psalm-139", "matthew-11", "john-3", "philippians-4"];
-      await db.insert(planDays).values(
-        psalmSlugs.map((slug, index) => ({
-          planId: tablePsalms.id,
-          dayNumber: index + 1,
-          title: `Evening ${index + 1}: ${SEED_PASSAGES.find((p) => p.slug === slug)?.theme ?? "Read"}`,
-          passageId: pid(slug),
-          completed: index < 5,
-          completedAt: daysAgo(20 - index, 19),
-        })),
-      );
-    }
+      const bibleVersesCount = bibleCountRes.rows[0]?.count ?? 0;
 
-    await db.insert(journalEntries).values([
-      {
-        userId: uid,
-        title: "Learning to stop at 3am",
-        body: "I have read Philippians 4 a hundred times and still reached for my phone before I reached for prayer. Tonight I tried it the other way around. I wrote down the one thing I was afraid of, said it out loud, and thanked God for three things I could actually see. The fear didn't vanish. But it got smaller than the room.",
-        mood: "heavy",
-        passageId: pid("philippians-4"),
-        sharing: "family",
-        createdAt: daysAgo(1, 3),
-        updatedAt: daysAgo(1, 3),
-      },
-      {
-        userId: uid,
-        title: "Ada asked who knit me",
-        body: "We read Psalm 139 at bedtime and Ada wanted to know if God used knitting needles or a sewing machine. Then she said, \"So my freckles were on purpose?\" I want to keep that question somewhere I can find it on the days I forget.",
-        mood: "joyful",
-        passageId: pid("psalm-139"),
-        sharing: "family",
-        createdAt: daysAgo(4, 20),
-        updatedAt: daysAgo(4, 20),
-      },
-      {
-        userId: uid,
-        title: "The week I carried the wrong yoke",
-        body: "Matthew 11 keeps correcting me. I have been treating rest like a reward I earn after the list is finished. But the invitation comes before the work is done — come, all who are weary. I am trying to put down the thing that was never mine to carry: the outcome of everyone else's choices.",
-        mood: "hopeful",
-        passageId: pid("matthew-11"),
-        sharing: "private",
-        createdAt: daysAgo(6, 7),
-        updatedAt: daysAgo(6, 7),
-      },
-      {
-        userId: uid,
-        title: "Noah's giant",
-        body: "Noah told me after school that he took off the armor — he stopped pretending he was fine in front of his friends. He said David's story made him feel less weird about being scared. I forget that the same words we give the little ones are working on the big ones too.",
-        mood: "grateful",
-        passageId: pid("1-samuel-17"),
-        sharing: "family",
-        createdAt: daysAgo(10, 22),
-        updatedAt: daysAgo(10, 22),
-      },
-      {
-        userId: uid,
-        title: "A promise with shoes on",
-        body: "Visited Mum Bisi today. She reminded me that Ruth didn't wait for a formal invitation — she just stayed. I want to be that kind of friend, the kind that shows up without needing to be asked. Note to self: call Sarah this week.",
-        mood: "peaceful",
-        passageId: pid("ruth-1"),
-        sharing: "private",
-        createdAt: daysAgo(16, 18),
-        updatedAt: daysAgo(16, 18),
-      },
-    ]);
-
-    await db.insert(prayers).values([
-      {
-        userId: uid,
-        authorName: "Grace",
-        body: "For Noah's exams next week — that he would remember he is loved regardless of a score.",
-        category: "family",
-        prayedCount: 14,
-        createdAt: daysAgo(2, 7),
-      },
-      {
-        userId: uid,
-        authorName: "Mum Bisi",
-        body: "Thank you for 63 years of mornings. Let me use the rest of them well.",
-        category: "gratitude",
-        isAnswered: true,
-        answeredNote: "Every morning since has arrived with something to be thankful for.",
-        prayedCount: 31,
-        createdAt: daysAgo(9, 6),
-      },
-      {
-        userId: uid,
-        authorName: "Ada",
-        body: "Please help my friend Lila's dog to feel better, and help me not be scared of the dark.",
-        category: "everyday",
-        prayedCount: 8,
-        createdAt: daysAgo(3, 20),
-      },
-      {
-        userId: uid,
-        authorName: "Grace",
-        body: "For steady hands at work and a softer voice at home. I can't do both without help.",
-        category: "provision",
-        prayedCount: 5,
-        createdAt: daysAgo(5, 13),
-      },
-    ]);
-
-    await db.insert(wonders).values([
-      {
-        userId: uid,
-        askedBy: "Ada",
-        askedAge: 8,
-        question: "If God spoke the light into being, why did God need to say it out loud? Couldn't God just think it?",
-        answer: "That's a brilliant question. Maybe saying it out loud is God inviting us into the story — the way you say \"I love you\" instead of just thinking it.",
-        answeredBy: "Grace",
-        status: "answered",
-        createdAt: daysAgo(4, 20),
-      },
-      {
-        userId: uid,
-        askedBy: "Tunde",
-        askedAge: 5,
-        question: "Is the shepherd stronger than the big dark?",
-        answer: "Yes. The dark is big, but the shepherd is closer than the dark, and he never lets go of you.",
-        answeredBy: "Grace",
-        status: "answered",
-        createdAt: daysAgo(6, 19),
-      },
-      {
-        userId: uid,
-        askedBy: "Noah",
-        askedAge: 15,
-        question: "How do you know when it's God's direction and not just your own preference?",
-        answer: "",
-        answeredBy: "",
-        status: "open",
-        createdAt: daysAgo(1, 21),
-      },
-      {
-        userId: uid,
-        askedBy: "Ada",
-        askedAge: 8,
-        question: "Does God have a favourite colour? Because I think it might be sunset.",
-        answer: "",
-        answeredBy: "",
-        status: "open",
-        createdAt: daysAgo(1, 18),
-      },
-    ]);
-
-    const logPlan: Array<[number, string, string]> = [
-      [0, "philippians-4", "grown"],
-      [1, "philippians-4", "grown"],
-      [2, "psalm-23", "little"],
-      [3, "psalm-139", "explorer"],
-      [4, "matthew-11", "grown"],
-      [5, "genesis-1", "little"],
-      [6, "proverbs-3", "grown"],
-      [7, "matthew-5", "youth"],
-      [9, "isaiah-40", "grown"],
-      [10, "1-samuel-17", "youth"],
-      [11, "john-3", "grown"],
-      [12, "luke-15", "explorer"],
-      [13, "ruth-1", "grown"],
-      [15, "psalm-23", "little"],
-      [16, "isaiah-40", "grown"],
-      [17, "genesis-1", "little"],
-      [18, "matthew-11", "grown"],
-      [20, "john-3", "grown"],
-      [21, "care-philippians", "grown"],
-    ];
-
-    const logRows = logPlan
-      .map(([offset, slug, band]) => {
-        const passageId = pid(slug);
-        return passageId
-          ? { userId: uid, passageId, band, createdAt: daysAgo(offset, 6 + (offset % 5)) }
-          : null;
-      })
-      .filter((row): row is { userId: string; passageId: string; band: string; createdAt: Date } =>
-        Boolean(row),
-      );
-
-    if (logRows.length > 0) {
-      await db.insert(readingLog).values(logRows);
+      if (bibleVersesCount === 0) {
+        void ensureCanonicalBibleSeeded();
+      }
     }
   } catch (cause) {
     console.error("Seed error", cause);
     throw cause;
   } finally {
     try {
-      await client.query("select pg_advisory_unlock(918273645)");
+      await client.query("SELECT pg_advisory_unlock(918273645)");
     } catch {
       // ignore
     }
     client.release();
   }
+}
+
+async function seedCanonicalBibleInProcess() {
+  let rawData = "";
+  try {
+    const filePath = path.join(process.cwd(), "data", "bible-kjv.json");
+    if (
+      typeof fs.existsSync !== "function" ||
+      !fs.existsSync(/* turbopackIgnore: true */ filePath)
+    ) {
+      return;
+    }
+    rawData = fs.readFileSync(/* turbopackIgnore: true */ filePath, "utf8");
+  } catch {
+    return;
+  }
+  const bibleJson = JSON.parse(rawData) as {
+    books: {
+      book: string;
+      chapters: { verses: { number: number; text: string }[] }[];
+    }[];
+  };
+  const osisToData = new Map(bibleJson.books.map((b) => [b.book, b]));
+
+  const bookRows = BIBLE_BOOKS_CATALOG.map((meta) => {
+    const bData = osisToData.get(meta.osis);
+    const chCount = bData ? bData.chapters.length : meta.chapterCount;
+    const vCount = bData
+      ? bData.chapters.reduce((sum, c) => sum + c.verses.length, 0)
+      : meta.verseCount;
+    return {
+      id: meta.id,
+      osis: meta.osis,
+      name: meta.name,
+      testament: meta.testament,
+      division: meta.division,
+      chapterCount: chCount,
+      verseCount: vCount,
+      summary: meta.summary,
+      theme: meta.theme,
+    };
+  });
+
+  await db.insert(bibleBooks).values(bookRows).onConflictDoNothing({ target: bibleBooks.id });
+
+  const batchSize = 1500;
+  let batch: {
+    id: number;
+    bookId: number;
+    bookName: string;
+    chapter: number;
+    verse: number;
+    text: string;
+  }[] = [];
+  let vId = 1;
+
+  for (const meta of BIBLE_BOOKS_CATALOG) {
+    const bData = osisToData.get(meta.osis);
+    if (!bData) continue;
+    for (let chIdx = 0; chIdx < bData.chapters.length; chIdx++) {
+      const chNum = chIdx + 1;
+      const ch = bData.chapters[chIdx];
+      for (const v of ch.verses) {
+        batch.push({
+          id: vId++,
+          bookId: meta.id,
+          bookName: meta.name,
+          chapter: chNum,
+          verse: v.number,
+          text: v.text.trim(),
+        });
+        if (batch.length >= batchSize) {
+          await db.insert(bibleVerses).values(batch).onConflictDoNothing({ target: bibleVerses.id });
+          batch = [];
+        }
+      }
+    }
+  }
+
+  if (batch.length > 0) {
+    await db.insert(bibleVerses).values(batch).onConflictDoNothing({ target: bibleVerses.id });
+  }
+
+  const [demoUser] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, DEMO_EMAIL))
+    .limit(1);
+
+  if (demoUser) {
+    const sampleChapters: [number, number][] = [
+      [1, 1], [1, 2], [1, 3],
+      [19, 23], [19, 139],
+      [20, 3],
+      [23, 40],
+      [40, 5], [40, 6], [40, 7],
+      [42, 15],
+      [43, 1], [43, 3],
+      [50, 4],
+      [66, 21], [66, 22],
+    ];
+    await db
+      .insert(canonicalProgress)
+      .values(
+        sampleChapters.map(([bookId, chapter]) => ({
+          userId: demoUser.id,
+          bookId,
+          chapter,
+        })),
+      )
+      .onConflictDoNothing({
+        target: [
+          canonicalProgress.userId,
+          canonicalProgress.bookId,
+          canonicalProgress.chapter,
+        ],
+      });
+  }
+}
+
+let bibleSeedPromise: Promise<void> | null = null;
+
+function ensureCanonicalBibleSeeded() {
+  bibleSeedPromise ??= seedCanonicalBibleInProcess().catch((err) => {
+    bibleSeedPromise = null;
+    console.error("Background canonical Bible seed failed:", err);
+  });
+  return bibleSeedPromise;
 }
 
 export const DEMO_CREDENTIALS = { email: DEMO_EMAIL, password: DEMO_PASSWORD };

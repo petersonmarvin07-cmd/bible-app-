@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Icon } from "@/components/icons";
 import { Button, Spinner } from "@/components/ui";
@@ -22,6 +22,14 @@ export function TodayReader({
   const [pending, setPending] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [streakCount, setStreakCount] = useState(streak);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined") {
+        window.speechSynthesis?.cancel();
+      }
+    };
+  }, []);
 
   const version = passage.versions.find((item) => item.band === band) ?? passage.versions[0];
   const activeBandMeta = getBand(band);

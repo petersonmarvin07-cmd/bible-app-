@@ -91,7 +91,8 @@ export default async function DashboardPage({
     getCollections(user.id),
   ]);
 
-  const dayIndex = Math.floor(Date.now() / 86_400_000) % Math.max(passages.length, 1);
+  const now = new Date();
+  const dayIndex = Math.floor(now.getTime() / 86_400_000) % Math.max(passages.length, 1);
   const todaysPassage = passages[dayIndex] ?? passages[0];
   const initialBand: BandId = BAND_IDS.includes(user.homeBand as BandId)
     ? (user.homeBand as BandId)

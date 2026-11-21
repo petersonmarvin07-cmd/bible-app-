@@ -1,15 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+
 import { Icon } from "@/components/icons";
 import { Badge, Button, EmptyState, Modal, Spinner } from "@/components/ui";
 import {
   BIBLE_BOOKS_CATALOG,
-  BIBLE_DIVISIONS,
-  BibleBookMeta,
   getBookById,
-  getBookByNameOrOsis,
 } from "@/lib/bible-data";
 import type { BibleVerseItem } from "@/lib/queries";
 
@@ -24,13 +22,19 @@ export function CompleteCanonReader({
   initialChapter?: number;
   initialVerses?: BibleVerseItem[];
 }) {
-  const [selectedDivision, setSelectedDivision] = useState<string>("All");
   const [activeBookId, setActiveBookId] = useState<number>(initialBookId);
   const [activeChapter, setActiveChapter] = useState<number>(initialChapter);
   const [verses, setVerses] = useState<BibleVerseItem[]>(initialVerses);
   const [isLoading, setIsLoading] = useState(false);
   const [isReadingAloud, setIsReadingAloud] = useState(false);
-  const [bookQuery, setBookQuery] = useState("");
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined") {
+        window.speechSynthesis?.cancel();
+      }
+    };
+  }, []);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -52,17 +56,6 @@ export function CompleteCanonReader({
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
-
-  const filteredBooks = useMemo(() => {
-    return BIBLE_BOOKS_CATALOG.filter((b) => {
-      const matchDiv = selectedDivision === "All" || b.division === selectedDivision;
-      const matchText =
-        !bookQuery.trim() ||
-        b.name.toLowerCase().includes(bookQuery.toLowerCase()) ||
-        b.osis.toLowerCase().includes(bookQuery.toLowerCase());
-      return matchDiv && matchText;
-    });
-  }, [selectedDivision, bookQuery]);
 
   const loadChapter = async (bId: number, ch: number) => {
     if (bId === activeBookId && ch === activeChapter && verses.length > 0) return;
@@ -428,20 +421,32 @@ export function CompleteCanonReader({
             </p>
           )}
 
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-ink">Select Shelf:</label>
-            <select
-              value={targetShelfId}
-              onChange={(e) => setTargetShelfId(e.target.value)}
-              className="w-full rounded-xl border border-line bg-cream px-3 py-2 text-xs text-ink"
-            >
-              {shelves.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.emoji} {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {shelves.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-line bg-parchment/40 p-4 text-center">
+              <p className="text-xs text-ink-muted">You don&rsquo;t have any verse shelves yet.</p>
+              <Link
+                href="/collections"
+                className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-pine hover:underline"
+              >
+                Create a shelf first →
+              </Link>
+            </div>
+          ) : (
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-ink">Select Shelf:</label>
+              <select
+                value={targetShelfId}
+                onChange={(e) => setTargetShelfId(e.target.value)}
+                className="w-full rounded-xl border border-line bg-cream px-3 py-2 text-xs text-ink"
+              >
+                {shelves.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.emoji} {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="mb-1 block text-xs font-semibold text-ink">Note (optional):</label>
@@ -458,7 +463,7 @@ export function CompleteCanonReader({
             <Button variant="secondary" onClick={() => setSaveModalOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={saveVerse} disabled={isSaving}>
+            <Button onClick={saveVerse} disabled={isSaving || !targetShelfId}>
               {isSaving ? <Spinner className="h-3 w-3" /> : <Icon name="bookmark" className="h-3 w-3" />}
               <span>Save</span>
             </Button>

@@ -1,8 +1,7 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "@/components/icons";
 import { BANDS, MOODS, getBand, type BandId } from "@/lib/constants";
 
@@ -106,6 +105,14 @@ export function LiveReaderHero() {
   const [passageIndex, setPassageIndex] = useState(0);
   const [band, setBand] = useState<BandId>("explorer");
   const [speaking, setSpeaking] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined") {
+        window.speechSynthesis?.cancel();
+      }
+    };
+  }, []);
 
   const activePassage = SAMPLE_PASSAGES[passageIndex];
   const activeVersion = activePassage.versions[band];
@@ -304,63 +311,73 @@ export function InteractiveMoodDemo() {
 
   const moodData: Record<
     string,
-    { passage: string; theme: string; quote: string; step: string }
+    { slug: string; passage: string; theme: string; quote: string; step: string }
   > = {
     anxious: {
+      slug: "philippians-4",
       passage: "Philippians 4:6–7",
       theme: "Peace",
       quote: "Do not be anxious about anything. Turn every worry into a prayer, and a peace that stands guard will arrive.",
       step: "Name the exact worry you're rehearsing and speak it out loud to God once.",
     },
     grateful: {
+      slug: "genesis-1",
       passage: "Genesis 1:1–5",
       theme: "Beginnings",
       quote: "God spoke, and light spilled into the void. God called the light day and said it was good.",
       step: "Notice three small things you can actually see right now and whisper thank you.",
     },
     hopeful: {
+      slug: "isaiah-40",
       passage: "Isaiah 40:28–31",
       theme: "Hope & Strength",
       quote: "Those who hope in the Lord will renew their strength. They will soar on wings like eagles.",
       step: "Pause pushing. Waiting on God is where your strength gets exchanged.",
     },
     lonely: {
+      slug: "psalm-23",
       passage: "Psalm 23:1–4",
       theme: "Comfort & Presence",
       quote: "Even through the darkest valley, I will fear no evil, for you are with me; your rod and staff comfort me.",
       step: "Remind yourself: you are accompanied right where you sit.",
     },
     joyful: {
-      passage: "Matthew 5:14–16",
-      theme: "Light & Identity",
-      quote: "You are the light of the world. A city on a hill cannot be hidden. Let your light shine.",
+      slug: "john-3",
+      passage: "John 3:16–17",
+      theme: "Love",
+      quote: "God's love isn't a small, careful thing — it's the biggest gift, given so the world could be rescued and made new.",
       step: "Share that joy with someone who has had a heavy week.",
     },
     weary: {
+      slug: "matthew-11",
       passage: "Matthew 11:28–30",
       theme: "Rest for the Soul",
       quote: "Come to me, all who are weary and burdened, and I will give you rest. My yoke is easy and light.",
       step: "Lay down the burden that was never yours to fix today.",
     },
     curious: {
+      slug: "psalm-139",
       passage: "Psalm 139:13–18",
       theme: "Wonder & Design",
       quote: "I am fearfully and wonderfully made; your works are wonderful, I know that full well.",
       step: "Pin your question on the Wonder Wall — curious faith is welcomed.",
     },
     courageous: {
+      slug: "1-samuel-17",
       passage: "1 Samuel 17:45–47",
       theme: "Courage",
       quote: "You come with a sword, but I come in the name of the Lord of hosts.",
       step: "Take off the armor that doesn't fit you and walk with your own size of faith.",
     },
     grieving: {
+      slug: "luke-15",
       passage: "Luke 15:4–7",
       theme: "Grace & Pursuing Love",
       quote: "What shepherd having a hundred sheep, if he loses one, does not leave the ninety-nine and search?",
       step: "You are not forgotten. God searches for the one who hurts.",
     },
     stretched: {
+      slug: "proverbs-3",
       passage: "Proverbs 3:5–6",
       theme: "Trust",
       quote: "Trust in the Lord with all your heart, and lean not on your own understanding.",
@@ -427,7 +444,7 @@ export function InteractiveMoodDemo() {
             </span>
           </div>
           <Link
-            href={`/read?passage=${active.passage.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+            href={`/read?passage=${active.slug}`}
             className="text-xs font-semibold text-pine hover:underline flex items-center gap-1"
           >
             Read across all 4 ages →

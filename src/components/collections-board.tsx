@@ -5,7 +5,6 @@ import { useState } from "react";
 
 import { Icon } from "@/components/icons";
 import {
-  Badge,
   Button,
   EmptyState,
   Modal,
@@ -205,6 +204,7 @@ export function CollectionsBoard({ initialCollections }: { initialCollections: C
   };
 
   const saveNote = async (collectionId: string, verse: VerseItem, note: string) => {
+    const previousNote = verse.note;
     setCollections((current) =>
       current.map((item) =>
         item.id === collectionId
@@ -219,6 +219,18 @@ export function CollectionsBoard({ initialCollections }: { initialCollections: C
       await apiRequest(`/api/verses/${verse.id}`, "PATCH", { note });
       showFlash("Note saved.");
     } catch (cause) {
+      setCollections((current) =>
+        current.map((item) =>
+          item.id === collectionId
+            ? {
+                ...item,
+                verses: item.verses.map((entry) =>
+                  entry.id === verse.id ? { ...entry, note: previousNote } : entry,
+                ),
+              }
+            : item,
+        ),
+      );
       setError(cause instanceof Error ? cause.message : "Could not save that note.");
     }
   };

@@ -9,7 +9,15 @@ import { Icon } from "@/components/icons";
 import { BANDS } from "@/lib/constants";
 import { inputClass, labelClass, Notice, Spinner } from "@/components/ui";
 
-export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
+export function AuthForm({
+  mode,
+  initialError = null,
+  nextPath = "/dashboard",
+}: {
+  mode: "signin" | "signup";
+  initialError?: string | null;
+  nextPath?: string;
+}) {
   const action = mode === "signin" ? signInAction : signUpAction;
   const [state, formAction, pending] = useActionState<AuthState, FormData>(action, null);
 
@@ -18,10 +26,10 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
       <div className="mb-6 flex items-center justify-between gap-3">
         <BackButton fallbackHref="/" label="Back to Home" />
         <Link
-          href="/read"
+          href="/"
           className="text-xs font-semibold text-pine hover:underline"
         >
-          Browse the Bible first →
+          Explore features first →
         </Link>
       </div>
 
@@ -40,6 +48,7 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
       </div>
 
       <form action={formAction} className="space-y-4">
+        <input type="hidden" name="next" value={nextPath} />
         {mode === "signup" ? (
           <div>
             <label className={labelClass} htmlFor="name">
@@ -109,7 +118,7 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
           </div>
         ) : null}
 
-        <Notice message={state?.error ?? null} />
+        <Notice message={state?.error ?? initialError} />
 
         <button
           type="submit"
@@ -134,6 +143,7 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
       </div>
 
       <form action={demoSignInAction}>
+        <input type="hidden" name="next" value={nextPath} />
         <button
           type="submit"
           className="group flex w-full items-center justify-between gap-3 rounded-xl border border-line bg-parchment/70 px-4 py-3 text-left text-sm transition hover:border-gold/60 hover:bg-gold-soft/40"
@@ -151,7 +161,13 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
       <p className="mt-6 text-center text-xs text-ink-muted">
         {mode === "signin" ? "New to Lumen? " : "Already have a household? "}
         <Link
-          href={mode === "signin" ? "/signup" : "/login"}
+          href={
+            nextPath && nextPath !== "/dashboard"
+              ? `${mode === "signin" ? "/signup" : "/login"}?next=${encodeURIComponent(nextPath)}`
+              : mode === "signin"
+                ? "/signup"
+                : "/login"
+          }
           className="font-semibold text-pine underline decoration-gold/50 underline-offset-4 hover:text-pine-deep"
         >
           {mode === "signin" ? "Create an account" : "Sign in"}

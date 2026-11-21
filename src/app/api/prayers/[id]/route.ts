@@ -30,7 +30,11 @@ export async function PATCH(request: Request, { params }: Params) {
       if (!text) return error("Prayer cannot be empty.");
       patch.body = text.slice(0, 2000);
     }
-    if (typeof body.authorName === "string") patch.authorName = str(body.authorName).slice(0, 60);
+    if (typeof body.authorName === "string") {
+      const authorName = str(body.authorName).slice(0, 60);
+      if (!authorName) return error("Author name cannot be empty.");
+      patch.authorName = authorName;
+    }
     if (typeof body.category === "string") {
       patch.category = oneOf(body.category, PRAYER_CATEGORIES, "everyday");
     }

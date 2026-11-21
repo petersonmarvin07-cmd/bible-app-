@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { canonicalProgress, readingLog, users } from "@/db/schema";
+import { bibleBooks, canonicalProgress, readingLog, users } from "@/db/schema";
 import { error, json, num, withUser } from "@/lib/api";
 import { getBookById } from "@/lib/bible-data";
 
@@ -21,27 +21,87 @@ export async function POST(request: Request) {
       return error("Chapter is out of bounds for this book.");
     }
 
-    // Insert into canonical_progress
+    // Ensure parent bible_books row exists before inserting canonical_progress
     await db
-      .insert(canonicalProgress)
+      .insert(bibleBooks)
       .values({
-        userId: user.id,
-        bookId,
-        chapter,
+        id: book.id,
+        osis: book.osis,
+        name: book.name,
+        testament: book.testament,
+        division: book.division,
+        chapterCount: book.chapterCount,
+        verseCount: book.verseCount,
+        summary: book.summary,
+        theme: book.theme,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing({ target: bibleBooks.id });
 
-    // Also log to reading_log and bump streak
-    await db.insert(readingLog).values({
-      userId: user.id,
-      band: user.homeBand,
-    });
+    const [existingProgress] = await db
+      .select({ id: canonicalProgress.id })
+      .from(canonicalProgress)
+      .where(
+        and(
+          eq(canonicalProgress.userId, user.id),
+          eq(canonicalProgress.bookId, bookId),
+          eq(canonicalProgress.chapter, chapter),
+        ),
+      )
+      .limit(1);
 
-    const newStreak = user.streakCount + 1;
-    await db
-      .update(users)
-      .set({ streakCount: newStreak })
-      .where(eq(users.id, user.id));
+    let insertedCount = 0;
+    if (!existingProgress) {
+      const inserted = await db
+        .insert(canonicalProgress)
+        .values({
+          userId: user.id,
+          bookId,
+          chapter,
+        })
+        .onConflictDoNothing({
+          target: [
+            canonicalProgress.userId,
+            canonicalProgress.bookId,
+            canonicalProgress.chapter,
+          ],
+        })
+        .returning({ id: canonicalProgress.id });
+      insertedCount = inserted.length;
+    }
+
+    let newStreak = user.streakCount;
+
+    if (insertedCount > 0) {
+      const [last] = await db
+        .select({ createdAt: readingLog.createdAt })
+        .from(readingLog)
+        .where(eq(readingLog.userId, user.id))
+        .orderBy(desc(readingLog.createdAt))
+        .limit(1);
+
+      await db.insert(readingLog).values({
+        userId: user.id,
+        band: user.homeBand,
+      });
+
+      const key = (date: Date) => date.toISOString().slice(0, 10);
+      const today = key(new Date());
+      const yesterday = key(new Date(Date.now() - 86_400_000));
+      const lastKey = last ? key(last.createdAt) : null;
+
+      if (lastKey === today) {
+        newStreak = Math.max(newStreak, 1);
+      } else if (lastKey === yesterday) {
+        newStreak = newStreak + 1;
+      } else {
+        newStreak = 1;
+      }
+
+      await db
+        .update(users)
+        .set({ streakCount: newStreak })
+        .where(eq(users.id, user.id));
+    }
 
     return json({
       ok: true,

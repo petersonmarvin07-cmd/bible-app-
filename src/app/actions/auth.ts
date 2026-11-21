@@ -14,70 +14,102 @@ export type AuthState = { error?: string } | null;
 
 const AVATARS = ["🌿", "🕊️", "🌻", "🔥", "🐢", "🦋", "⚓", "🌙"];
 
+function safeRedirectTarget(raw: string | null | undefined): string {
+  const candidate = String(raw ?? "").trim();
+  if (!candidate.startsWith("/") || candidate.startsWith("//")) {
+    return "/dashboard";
+  }
+  return candidate;
+}
+
 export async function signInAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
-  await ensureSeeded();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
+  const nextPath = safeRedirectTarget(String(formData.get("next") ?? ""));
 
   if (!email || !password) return { error: "Enter your email and password." };
 
-  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  if (!user || !verifyPassword(password, user.passwordHash)) {
-    return { error: "That email and password combination doesn't match our records." };
+  try {
+    await ensureSeeded().catch(() => undefined);
+    const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    if (!user || !verifyPassword(password, user.passwordHash)) {
+      return { error: "That email and password combination doesn't match our records." };
+    }
+
+    await createSession(user.id);
+  } catch (cause) {
+    console.error("signInAction failed:", cause);
+    return { error: "Database connection unavailable. Please check DATABASE_URL and try again." };
   }
 
-  await createSession(user.id);
-  redirect("/dashboard");
+  redirect(nextPath);
 }
 
 export async function signUpAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
-  await ensureSeeded();
   const name = String(formData.get("name") ?? "").trim();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
   const bandInput = String(formData.get("homeBand") ?? "grown");
+  const nextPath = safeRedirectTarget(String(formData.get("next") ?? ""));
 
   if (name.length < 2) return { error: "Tell us what to call you (at least 2 characters)." };
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "That email doesn't look quite right." };
   if (password.length < 6) return { error: "Use at least 6 characters for your password." };
 
-  const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-  if (existing) return { error: "An account with that email already exists. Try signing in." };
-
   const homeBand: BandId = BAND_IDS.includes(bandInput as BandId) ? (bandInput as BandId) : "grown";
   const avatar = AVATARS[Math.floor(Math.random() * AVATARS.length)];
 
-  const [created] = await db
-    .insert(users)
-    .values({
-      name,
-      email,
-      passwordHash: hashPassword(password),
-      avatarEmoji: avatar,
-      homeBand,
-      householdName: "My Household",
-    })
-    .returning();
+  try {
+    await ensureSeeded().catch(() => undefined);
+    const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (existing) return { error: "An account with that email already exists. Try signing in." };
 
-  if (!created) return { error: "We couldn't create your account. Please try again." };
+    const [created] = await db
+      .insert(users)
+      .values({
+        name,
+        email,
+        passwordHash: hashPassword(password),
+        avatarEmoji: avatar,
+        homeBand,
+        householdName: "My Household",
+      })
+      .returning();
 
-  await bootstrapNewUser({ id: created.id, name, homeBand });
-  await createSession(created.id);
-  redirect("/dashboard");
+    if (!created) return { error: "We couldn't create your account. Please try again." };
+
+    await bootstrapNewUser({ id: created.id, name, homeBand });
+    await createSession(created.id);
+  } catch (cause) {
+    console.error("signUpAction failed:", cause);
+    return { error: "Database connection unavailable. Please check DATABASE_URL and try again." };
+  }
+
+  redirect(nextPath);
 }
 
-export async function demoSignInAction() {
-  await ensureSeeded();
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, DEMO_CREDENTIALS.email))
-    .limit(1);
+export async function demoSignInAction(formData?: FormData) {
+  const nextPath = safeRedirectTarget(formData ? String(formData.get("next") ?? "") : "");
+  let userId: string | null = null;
+  try {
+    await ensureSeeded().catch(() => undefined);
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, DEMO_CREDENTIALS.email))
+      .limit(1);
 
-  if (!user) redirect("/login?demo=missing");
+    if (user) {
+      await createSession(user.id);
+      userId = user.id;
+    }
+  } catch (cause) {
+    console.error("demoSignInAction failed:", cause);
+    redirect("/login?demo=missing");
+  }
 
-  await createSession(user.id);
-  redirect("/dashboard");
+  if (!userId) redirect("/login?demo=missing");
+  redirect(nextPath);
 }
 
 export async function signOutAction() {

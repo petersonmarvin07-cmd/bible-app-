@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { error, json } from "@/lib/api";
 import { getBibleChapterVerses } from "@/lib/queries";
-import { getBookById, getBookByNameOrOsis } from "@/lib/bible-data";
+import { getBookByNameOrOsis } from "@/lib/bible-data";
 
 export const dynamic = "force-dynamic";
 
