@@ -2,18 +2,16 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "main": ".open-next/worker.js",
   "name": "bible-app",
-  "compatibility_date": "2026-11-19",
+  "compatibility_date": "2026-03-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "minify": true,
+  "build": {
+    "command": "test -f .open-next/worker.js || npx opennextjs-cloudflare build"
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
-  "services": [
-    {
-      "binding": "WORKER_SELF_REFERENCE",
-      "service": "bible-app"
-    }
-  ],
   "observability": {
     "enabled": true
   }
