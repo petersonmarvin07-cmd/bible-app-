@@ -1,6 +1,6 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { collections, familyMembers, passageVersions, passages, planDays, readingPlans, savedVerses, users } from "@/db/schema";
@@ -9,7 +9,7 @@ import { ensureSeeded } from "@/lib/seed";
 export async function bootstrapNewUser(user: { id: string; name: string; homeBand: string }) {
   try {
     await ensureSeeded();
-    const starters = await db.select().from(passages).limit(4);
+    const starters = await db.select().from(passages).orderBy(asc(passages.sortOrder)).limit(5);
     if (starters.length === 0) return;
 
     const [collection] = await db

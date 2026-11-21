@@ -194,7 +194,8 @@ export function PlansBoard({
     try {
       await apiRequest(`/api/days/${day.id}`, "PATCH", { completed: next });
       if (next) {
-        await apiRequest("/api/reading", "POST", { passageId: day.passageId, band: "grown" }).catch(
+        const readingBand = plan.band === "family" ? "grown" : plan.band;
+        await apiRequest("/api/reading", "POST", { passageId: day.passageId, band: readingBand }).catch(
           () => undefined,
         );
         showFlash("Day complete. One step further.");

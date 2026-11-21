@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { savedVerses } from "@/db/schema";
+import { collections, savedVerses } from "@/db/schema";
 import { error, json, str, withUser } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -14,13 +14,25 @@ export async function PATCH(request: Request, { params }: Params) {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const patch: Record<string, unknown> = {};
     if (typeof body.note === "string") patch.note = str(body.note).slice(0, 500);
-    if (typeof body.reference === "string") patch.reference = str(body.reference).slice(0, 120);
+    if (typeof body.reference === "string") {
+      const reference = str(body.reference);
+      if (!reference) return error("Verse reference cannot be empty.");
+      patch.reference = reference.slice(0, 120);
+    }
     if (typeof body.text === "string") {
       const text = str(body.text);
       if (!text) return error("Verse text cannot be empty.");
       patch.text = text.slice(0, 4000);
     }
-    if (typeof body.collectionId === "string") patch.collectionId = body.collectionId;
+    if (typeof body.collectionId === "string" && body.collectionId) {
+      const [owned] = await db
+        .select({ id: collections.id })
+        .from(collections)
+        .where(and(eq(collections.id, body.collectionId), eq(collections.userId, user.id)))
+        .limit(1);
+      if (!owned) return error("Collection not found.", 404);
+      patch.collectionId = body.collectionId;
+    }
     if (Object.keys(patch).length === 0) return error("Nothing to update.");
 
     const [updated] = await db

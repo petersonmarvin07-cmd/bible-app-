@@ -98,7 +98,7 @@ def main():
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
 
-    with open("data/bible-kjv.json") as f:
+    with open(os.path.join(os.path.dirname(__file__), "../data/bible-kjv.json"), encoding="utf-8") as f:
         bible_json = json.load(f)
 
     books_data = bible_json["books"]
@@ -173,7 +173,8 @@ def main():
     print(f"Verified count in bible_verses table: {total_count}")
 
     # Seed sample canonical progress for the demo user
-    cur.execute("SELECT id FROM users WHERE email = 'grace@lumen.app' LIMIT 1;")
+    demo_email = os.environ.get("DEMO_EMAIL", "grace@lumen.app")
+    cur.execute("SELECT id FROM users WHERE email = %s LIMIT 1;", (demo_email,))
     user_row = cur.fetchone()
     if user_row:
         user_id = user_row[0]

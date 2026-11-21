@@ -7,7 +7,7 @@ import { ensureSeeded } from "@/lib/seed";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
-  await ensureSeeded();
+  await ensureSeeded().catch(() => undefined);
   const user = await requireUser();
 
   return (

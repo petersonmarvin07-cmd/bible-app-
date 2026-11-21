@@ -9,7 +9,13 @@ import { Icon } from "@/components/icons";
 import { BANDS } from "@/lib/constants";
 import { inputClass, labelClass, Notice, Spinner } from "@/components/ui";
 
-export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
+export function AuthForm({
+  mode,
+  initialError = null,
+}: {
+  mode: "signin" | "signup";
+  initialError?: string | null;
+}) {
   const action = mode === "signin" ? signInAction : signUpAction;
   const [state, formAction, pending] = useActionState<AuthState, FormData>(action, null);
 
@@ -109,7 +115,7 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
           </div>
         ) : null}
 
-        <Notice message={state?.error ?? null} />
+        <Notice message={state?.error ?? initialError} />
 
         <button
           type="submit"

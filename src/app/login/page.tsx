@@ -9,10 +9,19 @@ export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Sign in · Lumen" };
 
-export default async function LoginPage() {
-  await ensureSeeded();
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ demo?: string }>;
+}) {
+  await ensureSeeded().catch(() => undefined);
   const user = await getSessionUser();
   if (user) redirect("/dashboard");
+  const params = searchParams ? await searchParams : {};
+  const initialError =
+    params.demo === "missing"
+      ? "Demo household could not be loaded. Please verify DATABASE_URL and database connectivity."
+      : null;
 
   return (
     <main className="grid min-h-dvh lg:grid-cols-[1.05fr_1fr]">
@@ -21,7 +30,7 @@ export default async function LoginPage() {
       </div>
       <div className="flex items-center justify-center bg-parchment px-5 py-12 sm:px-10">
         <div className="w-full max-w-md">
-          <AuthForm mode="signin" />
+          <AuthForm mode="signin" initialError={initialError} />
         </div>
       </div>
     </main>

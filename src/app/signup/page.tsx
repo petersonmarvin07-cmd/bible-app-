@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Create your household · Lumen" };
 
 export default async function SignUpPage() {
-  await ensureSeeded();
+  await ensureSeeded().catch(() => undefined);
   const user = await getSessionUser();
   if (user) redirect("/dashboard");
 

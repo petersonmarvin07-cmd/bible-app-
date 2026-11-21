@@ -82,10 +82,11 @@ export async function getCurrentUser(): Promise<User | null> {
   if (!isDemoAllowed) return null;
 
   try {
+    const demoEmail = process.env.DEMO_EMAIL ?? "grace@lumen.app";
     const [demo] = await db
       .select()
       .from(users)
-      .where(eq(users.email, "grace@lumen.app"))
+      .where(eq(users.email, demoEmail))
       .limit(1);
 
     if (demo) return demo;
@@ -113,7 +114,7 @@ export async function requireUser(): Promise<User> {
   }
 
   if (!user) {
-    throw redirect("/login");
+    redirect("/login");
   }
 
   return user;

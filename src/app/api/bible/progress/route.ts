@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { canonicalProgress, readingLog, users } from "@/db/schema";
 import { error, json, num, withUser } from "@/lib/api";
@@ -22,26 +22,49 @@ export async function POST(request: Request) {
     }
 
     // Insert into canonical_progress
-    await db
+    const inserted = await db
       .insert(canonicalProgress)
       .values({
         userId: user.id,
         bookId,
         chapter,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: canonicalProgress.id });
 
-    // Also log to reading_log and bump streak
-    await db.insert(readingLog).values({
-      userId: user.id,
-      band: user.homeBand,
-    });
+    let newStreak = user.streakCount;
 
-    const newStreak = user.streakCount + 1;
-    await db
-      .update(users)
-      .set({ streakCount: newStreak })
-      .where(eq(users.id, user.id));
+    if (inserted.length > 0) {
+      const [last] = await db
+        .select({ createdAt: readingLog.createdAt })
+        .from(readingLog)
+        .where(eq(readingLog.userId, user.id))
+        .orderBy(desc(readingLog.createdAt))
+        .limit(1);
+
+      await db.insert(readingLog).values({
+        userId: user.id,
+        band: user.homeBand,
+      });
+
+      const key = (date: Date) => date.toISOString().slice(0, 10);
+      const today = key(new Date());
+      const yesterday = key(new Date(Date.now() - 86_400_000));
+      const lastKey = last ? key(last.createdAt) : null;
+
+      if (lastKey === today) {
+        newStreak = Math.max(newStreak, 1);
+      } else if (lastKey === yesterday) {
+        newStreak = newStreak + 1;
+      } else {
+        newStreak = 1;
+      }
+
+      await db
+        .update(users)
+        .set({ streakCount: newStreak })
+        .where(eq(users.id, user.id));
+    }
 
     return json({
       ok: true,

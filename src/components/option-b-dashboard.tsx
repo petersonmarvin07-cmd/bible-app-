@@ -8,7 +8,6 @@ import { Badge, Button, EmptyState, Modal, Spinner } from "@/components/ui";
 import {
   BIBLE_BOOKS_CATALOG,
   BIBLE_DIVISIONS,
-  BibleBookMeta,
   getBookById,
 } from "@/lib/bible-data";
 import type { BibleVerseItem, CanonicalProgressSummary } from "@/lib/queries";
@@ -20,7 +19,6 @@ export function OptionBDashboard({
   initialBookId = 1,
   initialChapter = 1,
   initialVerses,
-  userName = "Friend",
 }: {
   canonicalStats: CanonicalProgressSummary;
   shelves: CollectionItem[];
@@ -36,6 +34,14 @@ export function OptionBDashboard({
   const [activeChapter, setActiveChapter] = useState<number>(initialChapter);
   const [verses, setVerses] = useState<BibleVerseItem[]>(initialVerses);
   const [isLoadingVerses, setIsLoadingVerses] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined") {
+        window.speechSynthesis?.cancel();
+      }
+    };
+  }, []);
 
   // Canonical Progress states
   const [readKeys, setReadKeys] = useState<Set<string>>(
@@ -110,6 +116,8 @@ export function OptionBDashboard({
   const toggleChapterRead = async () => {
     const nextRead = !isCurrentChapterRead;
     const key = activeChapterKey;
+    const prevSet = new Set(readKeys);
+    const prevStats = stats;
 
     // Optimistic update
     const nextSet = new Set(readKeys);
@@ -156,7 +164,8 @@ export function OptionBDashboard({
       );
     } catch {
       // Revert on error
-      setReadKeys(readKeys);
+      setReadKeys(prevSet);
+      setStats(prevStats);
       showToast("Failed to update progress. Please retry.");
     }
   };
@@ -842,22 +851,34 @@ export function OptionBDashboard({
             </div>
           )}
 
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-ink">
-              Choose Shelf:
-            </label>
-            <select
-              value={targetShelfId}
-              onChange={(e) => setTargetShelfId(e.target.value)}
-              className="w-full rounded-xl border border-line bg-cream px-3 py-2 text-xs text-ink focus:border-pine focus:outline-none"
-            >
-              {shelves.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.emoji} {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {shelves.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-line bg-parchment/40 p-4 text-center">
+              <p className="text-xs text-ink-muted">You don&rsquo;t have any verse shelves yet.</p>
+              <Link
+                href="/collections"
+                className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-pine hover:underline"
+              >
+                Create a shelf first →
+              </Link>
+            </div>
+          ) : (
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-ink">
+                Choose Shelf:
+              </label>
+              <select
+                value={targetShelfId}
+                onChange={(e) => setTargetShelfId(e.target.value)}
+                className="w-full rounded-xl border border-line bg-cream px-3 py-2 text-xs text-ink focus:border-pine focus:outline-none"
+              >
+                {shelves.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.emoji} {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="mb-1 block text-xs font-semibold text-ink">
@@ -879,7 +900,7 @@ export function OptionBDashboard({
             >
               Cancel
             </Button>
-            <Button onClick={confirmSaveVerse} disabled={isSavingVerse}>
+            <Button onClick={confirmSaveVerse} disabled={isSavingVerse || !targetShelfId}>
               {isSavingVerse ? <Spinner className="h-3.5 w-3.5" /> : <Icon name="bookmark" className="h-3.5 w-3.5" />}
               <span>Save to Shelf</span>
             </Button>

@@ -33,15 +33,19 @@ export function JournalBoard({
   passageOptions,
   focusId,
   defaultPassageId,
+  defaultReference,
 }: {
   initialEntries: JournalItem[];
   passageOptions: PassageOption[];
   focusId?: string;
   defaultPassageId?: string;
+  defaultReference?: string;
 }) {
   const focusEntry = focusId ? initialEntries.find((entry) => entry.id === focusId) ?? null : null;
   const [entries, setEntries] = useState(initialEntries);
-  const [open, setOpen] = useState(Boolean(focusEntry) || Boolean(defaultPassageId));
+  const [open, setOpen] = useState(
+    Boolean(focusEntry) || Boolean(defaultPassageId) || Boolean(defaultReference),
+  );
   const [editing, setEditing] = useState<JournalItem | null>(focusEntry);
   const [draft, setDraft] = useState<Draft>(
     focusEntry
@@ -52,7 +56,11 @@ export function JournalBoard({
           sharing: focusEntry.sharing,
           passageId: focusEntry.passageId ?? "",
         }
-      : { ...blankDraft, passageId: defaultPassageId ?? "" },
+      : {
+          ...blankDraft,
+          title: defaultReference && !defaultPassageId ? `Reflections on ${defaultReference}` : "",
+          passageId: defaultPassageId ?? "",
+        },
   );
   const [moodFilter, setMoodFilter] = useState("all");
   const autoOpened = useRef(false);
