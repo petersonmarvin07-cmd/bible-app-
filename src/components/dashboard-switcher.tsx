@@ -1,9 +1,8 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { BackButton } from "@/components/back-button";
-import { Icon } from "@/components/icons";
 
 export function DashboardSwitcher({
   initialOption = "a",
@@ -19,17 +18,14 @@ export function DashboardSwitcher({
   const searchParams = useSearchParams();
 
   const urlOption = searchParams.get("option") || searchParams.get("mode");
-  const defaultOption =
+  const activeOption: "a" | "b" =
     urlOption === "b" || urlOption === "B"
       ? "b"
       : urlOption === "a" || urlOption === "A"
-      ? "a"
-      : initialOption;
-
-  const [activeOption, setActiveOption] = useState<"a" | "b">(defaultOption);
+        ? "a"
+        : initialOption;
 
   const switchOption = (opt: "a" | "b") => {
-    setActiveOption(opt);
     const params = new URLSearchParams(searchParams.toString());
     params.set("option", opt);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });

@@ -5,7 +5,6 @@ import { useState } from "react";
 import { CompleteCanonReader } from "@/components/complete-canon-reader";
 import { ReaderExperience } from "@/components/reader-experience";
 import { BackButton } from "@/components/back-button";
-import { Icon } from "@/components/icons";
 import type { BandId } from "@/lib/constants";
 import type { BibleVerseItem } from "@/lib/queries";
 import type { PassageItem } from "@/lib/types";

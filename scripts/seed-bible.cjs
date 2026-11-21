@@ -173,7 +173,8 @@ async function main() {
     `);
 
     // Seed canonical progress for demo user
-    const userRes = await client.query("SELECT id FROM users WHERE email = 'grace@lumen.app' LIMIT 1");
+    const demoEmail = process.env.DEMO_EMAIL || "grace@lumen.app";
+    const userRes = await client.query("SELECT id FROM users WHERE email = $1 LIMIT 1", [demoEmail]);
     if (userRes.rows.length > 0) {
       const userId = userRes.rows[0].id;
       console.log(`Seeding canonical reading progress for user ${userId}...`);

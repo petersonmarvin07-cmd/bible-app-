@@ -13,7 +13,7 @@ export async function PATCH(request: Request, { params }: Params) {
   return withUser(async (user) => {
     const { id } = await params;
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    const patch: Record<string, unknown> = {};
 
     if (typeof body.title === "string") {
       const title = str(body.title);
@@ -32,6 +32,8 @@ export async function PATCH(request: Request, { params }: Params) {
     if ("passageId" in body) {
       patch.passageId = typeof body.passageId === "string" && body.passageId ? body.passageId : null;
     }
+    if (Object.keys(patch).length === 0) return error("Nothing to update.");
+    patch.updatedAt = new Date();
 
     const [updated] = await db
       .update(journalEntries)

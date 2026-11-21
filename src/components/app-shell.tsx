@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense, useState, type ReactNode } from "react";
 
 import { signOutAction } from "@/app/actions/auth";
 import { BackButton } from "@/components/back-button";
@@ -33,7 +33,6 @@ const groups: { label: string; items: NavItem[] }[] = [
       { href: "/journal", label: "Journal", icon: "feather" },
       { href: "/collections", label: "Verse Shelf", icon: "bookmark" },
       { href: "/plans", label: "Reading Plans", icon: "route" },
-      { href: "/trainer", label: "Verse Forge", icon: "brain", hint: "trainer" },
     ],
   },
   {
@@ -54,18 +53,79 @@ export type ShellUser = {
   streakCount: number;
 };
 
+function NavGroups({
+  pathname,
+  onNavigate,
+}: {
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  const searchParams = useSearchParams();
+  const currentOption = (searchParams.get("option") || searchParams.get("mode") || "a").toLowerCase();
+
+  return (
+    <nav className="scroll-fade flex-1 space-y-5 overflow-y-auto px-3 pb-4">
+      {groups.map((group) => (
+        <div key={group.label}>
+          <p className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-cream/35">
+            {group.label}
+          </p>
+          <ul className="space-y-0.5">
+            {group.items.map((item) => {
+              const [basePath, query] = item.href.split("?");
+              let active = item.href === "/" ? pathname === "/" : pathname === basePath;
+              if (active && query && basePath === "/dashboard") {
+                const itemOpt = new URLSearchParams(query).get("option")?.toLowerCase();
+                if (itemOpt) {
+                  active = currentOption === itemOpt;
+                }
+              }
+              return (
+                <li key={item.href}>
+                  <Link
+                    href={item.href}
+                    onClick={onNavigate}
+                    className={`group flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-[13px] font-medium transition ${
+                      active
+                        ? "bg-cream text-pine-deep shadow-sm"
+                        : "text-cream/70 hover:bg-cream/10 hover:text-cream"
+                    }`}
+                  >
+                    <Icon name={item.icon} className="h-4 w-4 shrink-0" />
+                    <span className="flex-1">{item.label}</span>
+                    {item.hint ? (
+                      <span
+                        className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+                          active ? "bg-gold-soft text-amber-900" : "bg-gold/25 text-gold-soft"
+                        }`}
+                      >
+                        {item.hint}
+                      </span>
+                    ) : null}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
 export function AppShell({ user, children }: { user: ShellUser; children: ReactNode }) {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
+  const [openPath, setOpenPath] = useState<string | null>(null);
+  const open = openPath === pathname;
 
   const nav = (
     <div className="flex h-full flex-col">
       <div className="px-5 pb-5 pt-6">
-        <Link href="/dashboard" className="flex items-center gap-2.5 text-cream">
+        <Link
+          href="/dashboard"
+          onClick={() => setOpenPath(null)}
+          className="flex items-center gap-2.5 text-cream"
+        >
           <LumenMark className="h-9 w-9" />
           <span className="font-display text-xl tracking-tight">Lumen</span>
         </Link>
@@ -83,48 +143,9 @@ export function AppShell({ user, children }: { user: ShellUser; children: ReactN
         </div>
       </div>
 
-      <nav className="scroll-fade flex-1 space-y-5 overflow-y-auto px-3 pb-4">
-        {groups.map((group) => (
-          <div key={group.label}>
-            <p className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-cream/35">
-              {group.label}
-            </p>
-            <ul className="space-y-0.5">
-              {group.items.map((item) => {
-                const basePath = item.href.split("?")[0];
-                const active =
-                  item.href === "/"
-                    ? pathname === "/"
-                    : pathname === basePath;
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      className={`group flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-[13px] font-medium transition ${
-                        active
-                          ? "bg-cream text-pine-deep shadow-sm"
-                          : "text-cream/70 hover:bg-cream/10 hover:text-cream"
-                      }`}
-                    >
-                      <Icon name={item.icon} className="h-4 w-4 shrink-0" />
-                      <span className="flex-1">{item.label}</span>
-                      {item.hint ? (
-                        <span
-                          className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
-                            active ? "bg-gold-soft text-amber-900" : "bg-gold/25 text-gold-soft"
-                          }`}
-                        >
-                          {item.hint}
-                        </span>
-                      ) : null}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
-      </nav>
+      <Suspense fallback={<div className="flex-1 px-3 pb-4" />}>
+        <NavGroups pathname={pathname} onNavigate={() => setOpenPath(null)} />
+      </Suspense>
 
       <div className="border-t border-cream/10 p-3">
         <div className="flex items-center gap-2.5 rounded-xl px-1.5 py-2">
@@ -167,7 +188,7 @@ export function AppShell({ user, children }: { user: ShellUser; children: ReactN
           </span>
           <button
             type="button"
-            onClick={() => setOpen(true)}
+            onClick={() => setOpenPath(pathname)}
             aria-label="Open navigation"
             className="rounded-xl border border-line bg-cream p-2 text-ink-soft"
           >
@@ -181,13 +202,13 @@ export function AppShell({ user, children }: { user: ShellUser; children: ReactN
           <button
             type="button"
             aria-label="Close navigation"
-            onClick={() => setOpen(false)}
+            onClick={() => setOpenPath(null)}
             className="absolute inset-0 bg-ink/50 backdrop-blur-sm"
           />
           <div className="animate-rise absolute inset-y-0 left-0 w-[280px] bg-pine-deep shadow-lift">
             <button
               type="button"
-              onClick={() => setOpen(false)}
+              onClick={() => setOpenPath(null)}
               aria-label="Close navigation"
               className="absolute right-3 top-4 rounded-lg p-1.5 text-cream/60 hover:bg-cream/10 hover:text-cream"
             >

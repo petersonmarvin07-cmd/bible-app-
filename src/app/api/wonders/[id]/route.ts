@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { wonders } from "@/db/schema";
-import { error, json, oneOf, str, withUser } from "@/lib/api";
+import { error, json, num, oneOf, str, withUser } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +19,15 @@ export async function PATCH(request: Request, { params }: Params) {
       if (question.length < 4) return error("Question is too short.");
       patch.question = question.slice(0, 600);
     }
-    if (typeof body.askedBy === "string") patch.askedBy = str(body.askedBy).slice(0, 60);
-    if (typeof body.askedAge === "number") patch.askedAge = Math.min(Math.max(body.askedAge, 2), 105);
+    if (typeof body.askedBy === "string") {
+      const askedBy = str(body.askedBy).slice(0, 60);
+      if (!askedBy) return error("Asker name cannot be empty.");
+      patch.askedBy = askedBy;
+    }
+    if (body.askedAge !== undefined) {
+      const age = num(body.askedAge);
+      if (age !== undefined) patch.askedAge = Math.min(Math.max(Math.round(age), 2), 105);
+    }
     if (typeof body.answer === "string") {
       patch.answer = str(body.answer).slice(0, 2000);
       if (patch.answer) {

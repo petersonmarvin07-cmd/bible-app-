@@ -1,10 +1,11 @@
 import "server-only";
 
+import fs from "node:fs";
+import path from "node:path";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
-  bibleBooks,
   bibleVerses,
   canonicalProgress,
   collections,
@@ -26,7 +27,6 @@ import {
   OT_CHAPTERS,
   TOTAL_CANONICAL_CHAPTERS,
   getBookById,
-  getBookByNameOrOsis,
 } from "@/lib/bible-data";
 import type {
   CollectionItem,
@@ -388,6 +388,59 @@ export type BibleVerseItem = {
   text: string;
 };
 
+type RawBibleJson = {
+  books: {
+    book: string;
+    chapters: {
+      chapter: number;
+      verses: { number: number; text: string }[];
+    }[];
+  }[];
+};
+
+let cachedLocalBible: Map<string, BibleVerseItem[]> | null = null;
+let cachedAllVerses: BibleVerseItem[] | null = null;
+
+function ensureLocalBibleIndex() {
+  if (cachedLocalBible && cachedAllVerses) {
+    return { byBookChapter: cachedLocalBible, all: cachedAllVerses };
+  }
+  const byBookChapter = new Map<string, BibleVerseItem[]>();
+  const all: BibleVerseItem[] = [];
+  try {
+    const filePath = path.join(process.cwd(), "data/bible-kjv.json");
+    const raw = fs.readFileSync(filePath, "utf8");
+    const parsed = JSON.parse(raw) as RawBibleJson;
+    const osisMap = new Map(parsed.books.map((b) => [b.book, b]));
+    let id = 1;
+    for (const meta of BIBLE_BOOKS_CATALOG) {
+      const bookData = osisMap.get(meta.osis);
+      if (!bookData) continue;
+      bookData.chapters.forEach((ch, idx) => {
+        const chNum = idx + 1;
+        const chapterVerses: BibleVerseItem[] = ch.verses.map((v) => {
+          const item: BibleVerseItem = {
+            id: id++,
+            bookId: meta.id,
+            bookName: meta.name,
+            chapter: chNum,
+            verse: v.number,
+            text: v.text.trim(),
+          };
+          all.push(item);
+          return item;
+        });
+        byBookChapter.set(`${meta.id}-${chNum}`, chapterVerses);
+      });
+    }
+    cachedLocalBible = byBookChapter;
+    cachedAllVerses = all;
+  } catch (err) {
+    console.error("Failed to load local bible-kjv.json fallback:", err);
+  }
+  return { byBookChapter, all };
+}
+
 export async function getBibleChapterVerses(
   bookId: number,
   chapter: number
@@ -395,23 +448,38 @@ export async function getBibleChapterVerses(
   const bookMeta = getBookById(bookId) ?? BIBLE_BOOKS_CATALOG[0];
   const safeChapter = Math.max(1, Math.min(chapter, bookMeta.chapterCount));
 
-  const rows = await db
-    .select()
-    .from(bibleVerses)
-    .where(and(eq(bibleVerses.bookId, bookMeta.id), eq(bibleVerses.chapter, safeChapter)))
-    .orderBy(asc(bibleVerses.verse));
+  const { byBookChapter } = ensureLocalBibleIndex();
+  const expectedVerses = byBookChapter.get(`${bookMeta.id}-${safeChapter}`) ?? [];
+
+  try {
+    const rows = await db
+      .select()
+      .from(bibleVerses)
+      .where(and(eq(bibleVerses.bookId, bookMeta.id), eq(bibleVerses.chapter, safeChapter)))
+      .orderBy(asc(bibleVerses.verse));
+
+    if (rows.length > 0 && rows.length >= expectedVerses.length) {
+      return {
+        book: bookMeta,
+        chapter: safeChapter,
+        verses: rows.map((r) => ({
+          id: r.id,
+          bookId: r.bookId,
+          bookName: r.bookName,
+          chapter: r.chapter,
+          verse: r.verse,
+          text: r.text,
+        })),
+      };
+    }
+  } catch (err) {
+    console.error("getBibleChapterVerses DB lookup failed, using local JSON fallback:", err);
+  }
 
   return {
     book: bookMeta,
     chapter: safeChapter,
-    verses: rows.map((r) => ({
-      id: r.id,
-      bookId: r.bookId,
-      bookName: r.bookName,
-      chapter: r.chapter,
-      verse: r.verse,
-      text: r.text,
-    })),
+    verses: expectedVerses,
   };
 }
 
@@ -424,18 +492,36 @@ export async function searchWholeBible(
 
   // Use full-text search with plainto_tsquery or ILIKE fallback
   try {
-    const rawResults = await db.execute(sql`
-      SELECT id, book_id AS "bookId", book_name AS "bookName", chapter, verse, text
-      FROM bible_verses
-      WHERE to_tsvector('english', text) @@ plainto_tsquery('english', ${trimmed})
-         OR text ILIKE ${`%${trimmed}%`}
-      ORDER BY book_id ASC, chapter ASC, verse ASC
-      LIMIT ${limit}
-    `);
+    const countRes = await db.execute(sql`SELECT count(*)::int AS count FROM bible_verses`);
+    const totalInDb = Number((countRes.rows[0] as { count?: number } | undefined)?.count ?? 0);
+    if (totalInDb >= 31000) {
+      const rawResults = await db.execute(sql`
+        SELECT id, book_id AS "bookId", book_name AS "bookName", chapter, verse, text
+        FROM bible_verses
+        WHERE to_tsvector('english', text) @@ plainto_tsquery('english', ${trimmed})
+           OR text ILIKE ${`%${trimmed}%`}
+        ORDER BY book_id ASC, chapter ASC, verse ASC
+        LIMIT ${limit}
+      `);
 
-    return (rawResults.rows as unknown as BibleVerseItem[]) || [];
+      return (rawResults.rows as unknown as BibleVerseItem[]) || [];
+    }
   } catch (err) {
-    console.error("searchWholeBible error:", err);
-    return [];
+    console.error("searchWholeBible DB error, using local JSON fallback:", err);
   }
+
+  const { all } = ensureLocalBibleIndex();
+  const lower = trimmed.toLowerCase();
+  const terms = lower.split(/\s+/).filter(Boolean);
+  const matches: BibleVerseItem[] = [];
+
+  for (const item of all) {
+    const textLower = item.text.toLowerCase();
+    if (textLower.includes(lower) || terms.every((t) => textLower.includes(t))) {
+      matches.push(item);
+      if (matches.length >= limit) break;
+    }
+  }
+
+  return matches;
 }

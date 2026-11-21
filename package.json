@@ -1,14 +1,17 @@
 {
-  "name": "nextjs-postgresql-template",
+  "name": "lumen-bible-app",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:push": "drizzle-kit push",
+    "db:seed:bible": "node scripts/seed-bible.cjs"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.17",
     "dotenv": "17.3.1",
     "drizzle-orm": "0.45.2",
     "next": "16.2.6",

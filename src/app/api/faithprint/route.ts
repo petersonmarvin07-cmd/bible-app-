@@ -3,22 +3,23 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { passageVersions, passages } from "@/db/schema";
 import { json, oneOf, str, withUser } from "@/lib/api";
-import { BANDS, MOODS, type BandId, type MoodId } from "@/lib/constants";
+import { BAND_IDS, MOODS, type BandId, type MoodId } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
-const bandIds = BANDS.map((band) => band.id) as string[];
-const moodIds = MOODS.map((mood) => mood.id) as string[];
+const moodIds = MOODS.map((mood) => mood.id) as MoodId[];
 
 export async function POST(request: Request) {
   return withUser(async (user) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const mood = oneOf(body.mood, moodIds, "hopeful") as MoodId;
-    const band = (oneOf(body.band, bandIds, user.homeBand in bandIds ? user.homeBand : "grown") as BandId) ?? "grown";
+    const mood = oneOf(body.mood, moodIds, "hopeful");
+    const defaultBand: BandId = BAND_IDS.includes(user.homeBand as BandId)
+      ? (user.homeBand as BandId)
+      : "grown";
+    const band = oneOf(body.band, BAND_IDS, defaultBand);
     const energy = str(body.energy, "any");
 
     const target = MOODS.find((item) => item.id === mood) ?? MOODS[0];
-    const ids = moodIds.includes(mood) ? mood : "hopeful";
 
     const matches = await db
       .select()
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
       .limit(1);
 
     return json({
-      mood: ids,
+      mood,
       energy,
       band,
       passage: {

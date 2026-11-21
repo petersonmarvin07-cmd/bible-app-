@@ -345,7 +345,7 @@ export default function LandingPage() {
                 Fill in the missing words across four stages: Read, Cloak, Half, and Recite.
               </p>
               <div className="mt-6 flex flex-wrap gap-2">
-                {["Stage 1: Read Twice", "Stage 2: Cloak Keywords", "Stage 3: 50% Cloaked", "Stage 4: Recite & Grade"].map((step, idx) => (
+                {["Stage 1: Read Twice", "Stage 2: Cloak Keywords", "Stage 3: 50% Cloaked", "Stage 4: Recite & Grade"].map((step) => (
                   <span
                     key={step}
                     className="rounded-xl border border-line bg-parchment/60 px-3 py-1.5 text-xs font-semibold text-ink-soft"

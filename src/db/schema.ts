@@ -277,7 +277,9 @@ export const canonicalProgress = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    bookId: integer("book_id").notNull(),
+    bookId: integer("book_id")
+      .notNull()
+      .references(() => bibleBooks.id, { onDelete: "cascade" }),
     chapter: integer("chapter").notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }).notNull().defaultNow(),
   },

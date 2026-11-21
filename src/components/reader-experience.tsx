@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 
 import { Icon } from "@/components/icons";
 import { Badge, Button, EmptyState, Modal, Spinner } from "@/components/ui";
@@ -30,7 +31,16 @@ export function ReaderExperience({
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [logged, setLogged] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const [streakCount, setStreakCount] = useState(streak);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined") {
+        window.speechSynthesis?.cancel();
+      }
+    };
+  }, []);
 
   const active = passages.find((passage) => passage.slug === slug) ?? passages[0];
   const filtered = useMemo(() => {
@@ -59,18 +69,29 @@ export function ReaderExperience({
 
   const speak = () => {
     if (typeof window === "undefined" || !("speechSynthesis" in window) || !version) return;
+    if (speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(`${version.title}. ${version.body}`);
     utterance.rate = 0.92;
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
     window.speechSynthesis.speak(utterance);
+    setSpeaking(true);
     setFlash("Reading aloud — a Lumen first for little ears.");
     setTimeout(() => setFlash(null), 3200);
   };
 
   const markRead = async () => {
     if (logged) return;
+    const prevStreak = streakCount;
+    const optimisticStreak = prevStreak > 0 ? prevStreak + 1 : 1;
     setLogged(true);
-    setStreakCount((count) => (count > 0 ? count + 1 : 1));
+    setStreakCount(optimisticStreak);
+    setError(null);
     try {
       const response = await fetch("/api/reading", {
         method: "POST",
@@ -79,10 +100,12 @@ export function ReaderExperience({
       });
       if (!response.ok) throw new Error("Could not log that reading.");
       const data = (await response.json()) as { streak: number };
-      if (typeof data.streak === "number") setStreakCount(data.streak);
-      setFlash(`Logged. ${streakCount + 1} days in a row — the household sees you.`);
+      const resolvedStreak = typeof data.streak === "number" ? data.streak : optimisticStreak;
+      setStreakCount(resolvedStreak);
+      setFlash(`Logged. ${resolvedStreak} ${resolvedStreak === 1 ? "day" : "days"} in a row — the household sees you.`);
     } catch {
       setLogged(false);
+      setStreakCount(prevStreak);
       setError("We couldn't save your reading. Check your connection and try again.");
     } finally {
       setTimeout(() => setFlash(null), 3600);
@@ -188,8 +211,12 @@ export function ReaderExperience({
                 <button
                   type="button"
                   onClick={speak}
-                  title="Read aloud"
-                  className="rounded-xl border border-line bg-cream p-2 text-ink-soft transition hover:border-pine/40 hover:text-pine"
+                  title={speaking ? "Stop reading aloud" : "Read aloud"}
+                  className={`rounded-xl border p-2 transition ${
+                    speaking
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-800 animate-pulse"
+                      : "border-line bg-cream text-ink-soft hover:border-pine/40 hover:text-pine"
+                  }`}
                 >
                   <Icon name="sun" className="h-4 w-4" />
                 </button>
@@ -275,13 +302,13 @@ export function ReaderExperience({
                 <span className="hidden sm:inline">Reading this counts for the whole household.</span>
               </div>
               <div className="flex gap-2">
-                <a
+                <Link
                   href={`/journal?passage=${active.id}&reference=${encodeURIComponent(active.reference)}`}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-cream px-3 py-2 text-xs font-medium text-ink transition hover:border-pine/40"
                 >
                   <Icon name="feather" className="h-3.5 w-3.5" />
                   Reflect
-                </a>
+                </Link>
                 <Button onClick={markRead} disabled={logged} size="sm">
                   {logged ? (
                     <>

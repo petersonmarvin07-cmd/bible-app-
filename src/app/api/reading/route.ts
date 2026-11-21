@@ -2,7 +2,7 @@ import { desc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { readingLog, users } from "@/db/schema";
-import { json, oneOf, str, withUser } from "@/lib/api";
+import { json, oneOf, withUser } from "@/lib/api";
 import { BAND_IDS } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
