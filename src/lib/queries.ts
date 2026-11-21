@@ -400,45 +400,90 @@ type RawBibleJson = {
 
 let cachedLocalBible: Map<string, BibleVerseItem[]> | null = null;
 let cachedAllVerses: BibleVerseItem[] | null = null;
+let localBibleLoadPromise: Promise<{
+  byBookChapter: Map<string, BibleVerseItem[]>;
+  all: BibleVerseItem[];
+}> | null = null;
 
-function ensureLocalBibleIndex() {
+function buildBibleIndex(parsed: RawBibleJson) {
+  const byBookChapter = new Map<string, BibleVerseItem[]>();
+  const all: BibleVerseItem[] = [];
+  const osisMap = new Map(parsed.books.map((b) => [b.book, b]));
+  let id = 1;
+  for (const meta of BIBLE_BOOKS_CATALOG) {
+    const bookData = osisMap.get(meta.osis);
+    if (!bookData) continue;
+    bookData.chapters.forEach((ch, idx) => {
+      const chNum = idx + 1;
+      const chapterVerses: BibleVerseItem[] = ch.verses.map((v) => {
+        const item: BibleVerseItem = {
+          id: id++,
+          bookId: meta.id,
+          bookName: meta.name,
+          chapter: chNum,
+          verse: v.number,
+          text: v.text.trim(),
+        };
+        all.push(item);
+        return item;
+      });
+      byBookChapter.set(`${meta.id}-${chNum}`, chapterVerses);
+    });
+  }
+  cachedLocalBible = byBookChapter;
+  cachedAllVerses = all;
+  return { byBookChapter, all };
+}
+
+async function ensureLocalBibleIndex(): Promise<{
+  byBookChapter: Map<string, BibleVerseItem[]>;
+  all: BibleVerseItem[];
+}> {
   if (cachedLocalBible && cachedAllVerses) {
     return { byBookChapter: cachedLocalBible, all: cachedAllVerses };
   }
-  const byBookChapter = new Map<string, BibleVerseItem[]>();
-  const all: BibleVerseItem[] = [];
-  try {
-    const filePath = path.join(process.cwd(), "data/bible-kjv.json");
-    const raw = fs.readFileSync(filePath, "utf8");
-    const parsed = JSON.parse(raw) as RawBibleJson;
-    const osisMap = new Map(parsed.books.map((b) => [b.book, b]));
-    let id = 1;
-    for (const meta of BIBLE_BOOKS_CATALOG) {
-      const bookData = osisMap.get(meta.osis);
-      if (!bookData) continue;
-      bookData.chapters.forEach((ch, idx) => {
-        const chNum = idx + 1;
-        const chapterVerses: BibleVerseItem[] = ch.verses.map((v) => {
-          const item: BibleVerseItem = {
-            id: id++,
-            bookId: meta.id,
-            bookName: meta.name,
-            chapter: chNum,
-            verse: v.number,
-            text: v.text.trim(),
-          };
-          all.push(item);
-          return item;
-        });
-        byBookChapter.set(`${meta.id}-${chNum}`, chapterVerses);
-      });
-    }
-    cachedLocalBible = byBookChapter;
-    cachedAllVerses = all;
-  } catch (err) {
-    console.error("Failed to load local bible-kjv.json fallback:", err);
+  if (localBibleLoadPromise) {
+    return localBibleLoadPromise;
   }
-  return { byBookChapter, all };
+
+  localBibleLoadPromise = (async () => {
+    // 1. Try local Node filesystem (data/bible-kjv.json)
+    try {
+      const dataFilePath = path.join(process.cwd(), "data", "bible-kjv.json");
+      if (
+        typeof fs.existsSync === "function" &&
+        fs.existsSync(/* turbopackIgnore: true */ dataFilePath)
+      ) {
+        const raw = fs.readFileSync(/* turbopackIgnore: true */ dataFilePath, "utf8");
+        return buildBibleIndex(JSON.parse(raw) as RawBibleJson);
+      }
+    } catch {
+      // Fall through to Cloudflare ASSETS binding if fs is unavailable
+    }
+
+    // 2. Try Cloudflare Workers static ASSETS binding (OpenNext Cloudflare)
+    try {
+      const cfSymbol = Symbol.for("__cloudflare-context__");
+      const cfCtx = (globalThis as Record<symbol, { env?: { ASSETS?: { fetch: typeof fetch } } }>)[
+        cfSymbol
+      ];
+      if (cfCtx?.env?.ASSETS) {
+        const res = await cfCtx.env.ASSETS.fetch(new Request("https://assets.local/bible-kjv.json"));
+        if (res.ok) {
+          const parsed = (await res.json()) as RawBibleJson;
+          return buildBibleIndex(parsed);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load bible-kjv.json from Cloudflare ASSETS:", err);
+    }
+
+    return { byBookChapter: new Map(), all: [] };
+  })().finally(() => {
+    localBibleLoadPromise = null;
+  });
+
+  return localBibleLoadPromise;
 }
 
 export async function getBibleChapterVerses(
@@ -448,7 +493,7 @@ export async function getBibleChapterVerses(
   const bookMeta = getBookById(bookId) ?? BIBLE_BOOKS_CATALOG[0];
   const safeChapter = Math.max(1, Math.min(chapter, bookMeta.chapterCount));
 
-  const { byBookChapter } = ensureLocalBibleIndex();
+  const { byBookChapter } = await ensureLocalBibleIndex();
   const expectedVerses = byBookChapter.get(`${bookMeta.id}-${safeChapter}`) ?? [];
 
   try {
@@ -510,7 +555,7 @@ export async function searchWholeBible(
     console.error("searchWholeBible DB error, using local JSON fallback:", err);
   }
 
-  const { all } = ensureLocalBibleIndex();
+  const { all } = await ensureLocalBibleIndex();
   const lower = trimmed.toLowerCase();
   const terms = lower.split(/\s+/).filter(Boolean);
   const matches: BibleVerseItem[] = [];

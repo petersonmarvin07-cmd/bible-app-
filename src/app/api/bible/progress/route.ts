@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { canonicalProgress, readingLog, users } from "@/db/schema";
+import { bibleBooks, canonicalProgress, readingLog, users } from "@/db/schema";
 import { error, json, num, withUser } from "@/lib/api";
 import { getBookById } from "@/lib/bible-data";
 
@@ -21,20 +21,57 @@ export async function POST(request: Request) {
       return error("Chapter is out of bounds for this book.");
     }
 
-    // Insert into canonical_progress
-    const inserted = await db
-      .insert(canonicalProgress)
+    // Ensure parent bible_books row exists before inserting canonical_progress
+    await db
+      .insert(bibleBooks)
       .values({
-        userId: user.id,
-        bookId,
-        chapter,
+        id: book.id,
+        osis: book.osis,
+        name: book.name,
+        testament: book.testament,
+        division: book.division,
+        chapterCount: book.chapterCount,
+        verseCount: book.verseCount,
+        summary: book.summary,
+        theme: book.theme,
       })
-      .onConflictDoNothing()
-      .returning({ id: canonicalProgress.id });
+      .onConflictDoNothing({ target: bibleBooks.id });
+
+    const [existingProgress] = await db
+      .select({ id: canonicalProgress.id })
+      .from(canonicalProgress)
+      .where(
+        and(
+          eq(canonicalProgress.userId, user.id),
+          eq(canonicalProgress.bookId, bookId),
+          eq(canonicalProgress.chapter, chapter),
+        ),
+      )
+      .limit(1);
+
+    let insertedCount = 0;
+    if (!existingProgress) {
+      const inserted = await db
+        .insert(canonicalProgress)
+        .values({
+          userId: user.id,
+          bookId,
+          chapter,
+        })
+        .onConflictDoNothing({
+          target: [
+            canonicalProgress.userId,
+            canonicalProgress.bookId,
+            canonicalProgress.chapter,
+          ],
+        })
+        .returning({ id: canonicalProgress.id });
+      insertedCount = inserted.length;
+    }
 
     let newStreak = user.streakCount;
 
-    if (inserted.length > 0) {
+    if (insertedCount > 0) {
       const [last] = await db
         .select({ createdAt: readingLog.createdAt })
         .from(readingLog)

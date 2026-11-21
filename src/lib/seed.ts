@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { eq, sql } from "drizzle-orm";
 
-import { db, pool } from "@/db";
+import { db, getDbKind, pool } from "@/db";
 import {
   bibleBooks,
   bibleVerses,
@@ -532,7 +532,7 @@ async function runSeed() {
             reflectionPrompt: item.reflectionPrompt,
             sortOrder: index,
           })
-          .onConflictDoNothing()
+          .onConflictDoNothing({ target: passages.slug })
           .returning({ id: passages.id });
 
         let passageId = inserted[0]?.id;
@@ -555,7 +555,10 @@ async function runSeed() {
           takeaway: item.versions[band].takeaway,
           wonderQuestion: item.versions[band].wonder,
         }));
-        await db.insert(passageVersions).values(versionRows).onConflictDoNothing();
+        await db
+          .insert(passageVersions)
+          .values(versionRows)
+          .onConflictDoNothing({ target: [passageVersions.passageId, passageVersions.band] });
       }
 
       const [demo] = await db
@@ -569,7 +572,7 @@ async function runSeed() {
           homeBand: "grown",
           streakCount: 12,
         })
-        .onConflictDoNothing()
+        .onConflictDoNothing({ target: users.email })
         .returning();
 
       if (demo) {
@@ -804,6 +807,8 @@ async function runSeed() {
             authorName: "Grace",
             body: "For Noah's exams next week — that he would remember he is loved regardless of a score.",
             category: "family",
+            isAnswered: false,
+            answeredNote: "",
             prayedCount: 14,
             createdAt: daysAgo(2, 7),
           },
@@ -822,6 +827,8 @@ async function runSeed() {
             authorName: "Ada",
             body: "Please help my friend Lila's dog to feel better, and help me not be scared of the dark.",
             category: "everyday",
+            isAnswered: false,
+            answeredNote: "",
             prayedCount: 8,
             createdAt: daysAgo(3, 20),
           },
@@ -830,6 +837,8 @@ async function runSeed() {
             authorName: "Grace",
             body: "For steady hands at work and a softer voice at home. I can't do both without help.",
             category: "provision",
+            isAnswered: false,
+            answeredNote: "",
             prayedCount: 5,
             createdAt: daysAgo(5, 13),
           },
@@ -941,7 +950,7 @@ async function runSeed() {
               theme: meta.theme,
             })),
           )
-          .onConflictDoNothing();
+          .onConflictDoNothing({ target: bibleBooks.id });
 
         await db
           .insert(canonicalProgress)
@@ -952,17 +961,25 @@ async function runSeed() {
               chapter,
             })),
           )
-          .onConflictDoNothing();
+          .onConflictDoNothing({
+            target: [
+              canonicalProgress.userId,
+              canonicalProgress.bookId,
+              canonicalProgress.chapter,
+            ],
+          });
       }
     }
 
-    const bibleCountRes = await client.query(
-      "SELECT count(*)::int AS count FROM bible_verses",
-    );
-    const bibleVersesCount = bibleCountRes.rows[0]?.count ?? 0;
+    if (getDbKind() !== "pg-mem") {
+      const bibleCountRes = await client.query(
+        "SELECT count(*)::int AS count FROM bible_verses",
+      );
+      const bibleVersesCount = bibleCountRes.rows[0]?.count ?? 0;
 
-    if (bibleVersesCount === 0) {
-      void ensureCanonicalBibleSeeded();
+      if (bibleVersesCount === 0) {
+        void ensureCanonicalBibleSeeded();
+      }
     }
   } catch (cause) {
     console.error("Seed error", cause);
@@ -978,10 +995,19 @@ async function runSeed() {
 }
 
 async function seedCanonicalBibleInProcess() {
-  const filePath = path.join(process.cwd(), "data/bible-kjv.json");
-  if (!fs.existsSync(filePath)) return;
-
-  const rawData = fs.readFileSync(filePath, "utf8");
+  let rawData = "";
+  try {
+    const filePath = path.join(process.cwd(), "data", "bible-kjv.json");
+    if (
+      typeof fs.existsSync !== "function" ||
+      !fs.existsSync(/* turbopackIgnore: true */ filePath)
+    ) {
+      return;
+    }
+    rawData = fs.readFileSync(/* turbopackIgnore: true */ filePath, "utf8");
+  } catch {
+    return;
+  }
   const bibleJson = JSON.parse(rawData) as {
     books: {
       book: string;
@@ -1009,7 +1035,7 @@ async function seedCanonicalBibleInProcess() {
     };
   });
 
-  await db.insert(bibleBooks).values(bookRows).onConflictDoNothing();
+  await db.insert(bibleBooks).values(bookRows).onConflictDoNothing({ target: bibleBooks.id });
 
   const batchSize = 1500;
   let batch: {
@@ -1038,7 +1064,7 @@ async function seedCanonicalBibleInProcess() {
           text: v.text.trim(),
         });
         if (batch.length >= batchSize) {
-          await db.insert(bibleVerses).values(batch).onConflictDoNothing();
+          await db.insert(bibleVerses).values(batch).onConflictDoNothing({ target: bibleVerses.id });
           batch = [];
         }
       }
@@ -1046,7 +1072,7 @@ async function seedCanonicalBibleInProcess() {
   }
 
   if (batch.length > 0) {
-    await db.insert(bibleVerses).values(batch).onConflictDoNothing();
+    await db.insert(bibleVerses).values(batch).onConflictDoNothing({ target: bibleVerses.id });
   }
 
   const [demoUser] = await db
@@ -1076,7 +1102,13 @@ async function seedCanonicalBibleInProcess() {
           chapter,
         })),
       )
-      .onConflictDoNothing();
+      .onConflictDoNothing({
+        target: [
+          canonicalProgress.userId,
+          canonicalProgress.bookId,
+          canonicalProgress.chapter,
+        ],
+      });
   }
 }
 

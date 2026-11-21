@@ -6,5 +6,5 @@ export default defineConfig([
   // Keep the starter on the flat config export that actually runs under the pinned ESLint/Next toolchain.
   ...nextCoreWebVitals,
   ...nextTypescript,
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", "scripts/**/*.cjs"]),
+  globalIgnores([".next/**", ".open-next/**", ".wrangler/**", "out/**", "build/**", "next-env.d.ts", "cloudflare-env.d.ts", "scripts/**/*.cjs"]),
 ]);

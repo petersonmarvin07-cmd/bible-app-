@@ -1,9 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
+import { randomUUID } from "node:crypto";
 
-import { PGlite } from "@electric-sql/pglite";
 import { drizzle as drizzleNodePg, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import { DataType, newDb } from "pg-mem";
 import { Pool } from "pg";
 
 const SCHEMA_SQL = `
@@ -169,13 +167,14 @@ CREATE TABLE IF NOT EXISTS "reading_log" (
 CREATE TABLE IF NOT EXISTS "canonical_progress" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "user_id" uuid NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
-  "book_id" integer NOT NULL,
+  "book_id" integer NOT NULL REFERENCES "bible_books"("id") ON DELETE CASCADE,
   "chapter" integer NOT NULL,
   "completed_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS "bible_books_osis_key" ON "bible_books" ("osis");
 CREATE UNIQUE INDEX IF NOT EXISTS "bible_books_name_key" ON "bible_books" ("name");
+CREATE UNIQUE INDEX IF NOT EXISTS "bible_verses_ref_unique" ON "bible_verses" ("book_id", "chapter", "verse");
 CREATE INDEX IF NOT EXISTS "bible_verses_book_ch_idx" ON "bible_verses" ("book_id", "chapter");
 CREATE INDEX IF NOT EXISTS "bible_verses_book_name_ch_idx" ON "bible_verses" ("book_name", "chapter");
 CREATE UNIQUE INDEX IF NOT EXISTS "canonical_progress_user_book_ch" ON "canonical_progress" ("user_id", "book_id", "chapter");
@@ -195,36 +194,139 @@ CREATE UNIQUE INDEX IF NOT EXISTS "users_email_key" ON "users" ("email");
 CREATE INDEX IF NOT EXISTS "wonders_user_idx" ON "wonders" ("user_id");
 `;
 
+type GenericClient = {
+  query: (text: string, values?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+  release: () => void;
+};
+
 type DbGlobal = typeof globalThis & {
-  __arenaNextJsPostgresqlPool?: Pool;
-  __arenaNextJsPglite?: PGlite;
-  __arenaNextJsDbPromise?: Promise<NodePgDatabase>;
+  __lumenPgPool?: Pool;
+  __lumenFallbackClient?: GenericClient;
+  __lumenDbPromise?: Promise<NodePgDatabase>;
+  __lumenDbKind?: "postgres" | "pg-mem";
 };
 
 const globalForDb = globalThis as DbGlobal;
 
-async function createPgliteDb(): Promise<NodePgDatabase> {
-  if (!globalForDb.__arenaNextJsPglite) {
-    const dataDir = path.join(process.cwd(), ".pglite");
-    fs.mkdirSync(dataDir, { recursive: true });
-    const pglite = new PGlite(dataDir);
-    await pglite.waitReady;
-    await pglite.exec(SCHEMA_SQL);
-    globalForDb.__arenaNextJsPglite = pglite;
+function serializePgMemValue(value: unknown): unknown {
+  if (value instanceof Date) {
+    return value.toISOString();
   }
-  return drizzlePglite(globalForDb.__arenaNextJsPglite) as unknown as NodePgDatabase;
+  return value;
+}
+
+type RawPgQueryFn = (
+  queryTextOrConfig: string | Record<string, unknown>,
+  values?: unknown[],
+) => Promise<{
+  rows: Record<string, unknown>[];
+  fields?: { name: string }[];
+  [key: string]: unknown;
+}>;
+
+function wrapPgMemQuery(origFn: RawPgQueryFn) {
+  return async (
+    queryTextOrConfig: string | Record<string, unknown>,
+    values?: unknown[],
+  ) => {
+    if (typeof queryTextOrConfig === "string") {
+      if (/pg_advisory_(un)?lock/i.test(queryTextOrConfig)) {
+        return { rows: [] };
+      }
+      return origFn(queryTextOrConfig, values);
+    }
+
+    const {
+      types: _ignoredTypes,
+      rowMode,
+      values: cfgValues,
+      ...rest
+    } = queryTextOrConfig;
+    void _ignoredTypes;
+
+    const sqlText = typeof rest.text === "string" ? rest.text : "";
+    if (/pg_advisory_(un)?lock/i.test(sqlText)) {
+      return { rows: [] };
+    }
+
+    const finalValues = values !== undefined ? values : (cfgValues as unknown[] | undefined);
+    const res = await origFn({ ...rest, values: finalValues });
+
+    if (rowMode === "array") {
+      const fieldNames = (res.fields ?? []).map((f) => f.name);
+      const arrayRows = res.rows.map((row) => {
+        const keys = Object.keys(row);
+        if (
+          fieldNames.length === keys.length &&
+          fieldNames.every((f) => f in row)
+        ) {
+          return fieldNames.map((k) => serializePgMemValue(row[k]));
+        }
+        return keys.map((k) => serializePgMemValue(row[k]));
+      });
+      return { ...res, rows: arrayRows };
+    }
+
+    return res;
+  };
+}
+
+function createPgMemFallback(): NodePgDatabase {
+  const mem = newDb();
+  mem.public.registerFunction({
+    name: "gen_random_uuid",
+    returns: DataType.uuid,
+    implementation: () => randomUUID(),
+    impure: true,
+  });
+  mem.public.registerFunction({
+    name: "current_database",
+    returns: DataType.text,
+    implementation: () => "lumen",
+  });
+  mem.public.registerFunction({
+    name: "version",
+    returns: DataType.text,
+    implementation: () => "PostgreSQL 16.0 (pg-mem)",
+  });
+
+  mem.public.none(SCHEMA_SQL);
+
+  const { Pool: MemPool } = mem.adapters.createPg();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawPool: any = new MemPool();
+  const wrappedPoolQuery = wrapPgMemQuery(rawPool.query.bind(rawPool));
+  rawPool.query = wrappedPoolQuery;
+
+  const origConnect = rawPool.connect.bind(rawPool);
+  rawPool.connect = async (...args: unknown[]) => {
+    const client = await origConnect(...args);
+    client.query = wrapPgMemQuery(client.query.bind(client));
+    return client;
+  };
+
+  const memPool = rawPool as Pool;
+  globalForDb.__lumenFallbackClient = {
+    query: async (text: string, values?: unknown[]) => {
+      const res = await wrappedPoolQuery(text, values);
+      return { rows: res.rows as Record<string, unknown>[] };
+    },
+    release: () => undefined,
+  };
+  globalForDb.__lumenDbKind = "pg-mem";
+  return drizzleNodePg(memPool);
 }
 
 async function resolveDb(): Promise<NodePgDatabase> {
   const databaseUrl = process.env.DATABASE_URL;
 
-  if (databaseUrl && !databaseUrl.startsWith("pglite://")) {
+  if (databaseUrl && !databaseUrl.startsWith("pglite://") && !databaseUrl.startsWith("memory://")) {
     try {
       const candidatePool =
-        globalForDb.__arenaNextJsPostgresqlPool ??
+        globalForDb.__lumenPgPool ??
         new Pool({
           connectionString: databaseUrl,
-          connectionTimeoutMillis: 3000,
+          connectionTimeoutMillis: 4000,
         });
       const client = await candidatePool.connect();
       try {
@@ -232,36 +334,35 @@ async function resolveDb(): Promise<NodePgDatabase> {
       } finally {
         client.release();
       }
-      globalForDb.__arenaNextJsPostgresqlPool = candidatePool;
+      globalForDb.__lumenPgPool = candidatePool;
+      globalForDb.__lumenDbKind = "postgres";
       return drizzleNodePg(candidatePool);
     } catch (err) {
-      if (process.env.NODE_ENV === "production") {
+      if (process.env.REQUIRE_EXTERNAL_DB === "true") {
         throw err;
       }
       console.warn(
-        "PostgreSQL server unreachable; falling back to embedded local PGlite database (.pglite)."
+        "External PostgreSQL unreachable; falling back to embedded database:",
+        err instanceof Error ? err.message : err,
       );
     }
-  } else if (
-    process.env.NODE_ENV === "production" &&
-    !databaseUrl &&
-    process.env.ALLOW_EMBEDDED_DB !== "true"
-  ) {
-    // Allow fallback to embedded PGlite in self-hosted/sandbox environments unless explicitly disallowed
-    if (process.env.REQUIRE_EXTERNAL_DB === "true") {
-      throw new Error("DATABASE_URL is required in production");
-    }
+  } else if (process.env.REQUIRE_EXTERNAL_DB === "true") {
+    throw new Error("DATABASE_URL is required when REQUIRE_EXTERNAL_DB=true");
   }
 
-  return createPgliteDb();
+  return createPgMemFallback();
 }
 
 export function getDbAsync(): Promise<NodePgDatabase> {
-  globalForDb.__arenaNextJsDbPromise ??= resolveDb().catch((err) => {
-    globalForDb.__arenaNextJsDbPromise = undefined;
+  globalForDb.__lumenDbPromise ??= resolveDb().catch((err) => {
+    globalForDb.__lumenDbPromise = undefined;
     throw err;
   });
-  return globalForDb.__arenaNextJsDbPromise;
+  return globalForDb.__lumenDbPromise;
+}
+
+export function getDbKind(): "postgres" | "pg-mem" {
+  return globalForDb.__lumenDbKind ?? "pg-mem";
 }
 
 export const pool: Pool = new Proxy({} as Pool, {
@@ -269,22 +370,13 @@ export const pool: Pool = new Proxy({} as Pool, {
     if (prop === "connect") {
       return async () => {
         await getDbAsync();
-        if (globalForDb.__arenaNextJsPostgresqlPool) {
-          return globalForDb.__arenaNextJsPostgresqlPool.connect();
+        if (globalForDb.__lumenPgPool) {
+          return globalForDb.__lumenPgPool.connect();
         }
-        const pg = globalForDb.__arenaNextJsPglite!;
-        return {
-          query: async (text: string, values?: unknown[]) => {
-            if (/pg_advisory_(un)?lock/i.test(text)) {
-              return { rows: [] };
-            }
-            return pg.query(text, values);
-          },
-          release: () => undefined,
-        };
+        return globalForDb.__lumenFallbackClient!;
       };
     }
-    const activePool = globalForDb.__arenaNextJsPostgresqlPool;
+    const activePool = globalForDb.__lumenPgPool;
     if (activePool) {
       const value = Reflect.get(activePool, prop, activePool);
       return typeof value === "function" ? value.bind(activePool) : value;

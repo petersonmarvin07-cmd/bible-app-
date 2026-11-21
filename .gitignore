@@ -21,6 +21,12 @@ next-env.d.ts
 # Database
 .pglite/
 
+# OpenNext & Cloudflare Wrangler
+.open-next/
+.wrangler/
+.dev.vars*
+!.dev.vars.example
+
 # Testing / coverage
 coverage/
 .nyc_output/
