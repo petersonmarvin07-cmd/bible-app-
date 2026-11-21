@@ -14,9 +14,18 @@ export type AuthState = { error?: string } | null;
 
 const AVATARS = ["🌿", "🕊️", "🌻", "🔥", "🐢", "🦋", "⚓", "🌙"];
 
+function safeRedirectTarget(raw: string | null | undefined): string {
+  const candidate = String(raw ?? "").trim();
+  if (!candidate.startsWith("/") || candidate.startsWith("//")) {
+    return "/dashboard";
+  }
+  return candidate;
+}
+
 export async function signInAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
+  const nextPath = safeRedirectTarget(String(formData.get("next") ?? ""));
 
   if (!email || !password) return { error: "Enter your email and password." };
 
@@ -33,7 +42,7 @@ export async function signInAction(_prev: AuthState, formData: FormData): Promis
     return { error: "Database connection unavailable. Please check DATABASE_URL and try again." };
   }
 
-  redirect("/dashboard");
+  redirect(nextPath);
 }
 
 export async function signUpAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
@@ -41,6 +50,7 @@ export async function signUpAction(_prev: AuthState, formData: FormData): Promis
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
   const bandInput = String(formData.get("homeBand") ?? "grown");
+  const nextPath = safeRedirectTarget(String(formData.get("next") ?? ""));
 
   if (name.length < 2) return { error: "Tell us what to call you (at least 2 characters)." };
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "That email doesn't look quite right." };
@@ -75,10 +85,11 @@ export async function signUpAction(_prev: AuthState, formData: FormData): Promis
     return { error: "Database connection unavailable. Please check DATABASE_URL and try again." };
   }
 
-  redirect("/dashboard");
+  redirect(nextPath);
 }
 
-export async function demoSignInAction() {
+export async function demoSignInAction(formData?: FormData) {
+  const nextPath = safeRedirectTarget(formData ? String(formData.get("next") ?? "") : "");
   let userId: string | null = null;
   try {
     await ensureSeeded().catch(() => undefined);
@@ -98,7 +109,7 @@ export async function demoSignInAction() {
   }
 
   if (!userId) redirect("/login?demo=missing");
-  redirect("/dashboard");
+  redirect(nextPath);
 }
 
 export async function signOutAction() {

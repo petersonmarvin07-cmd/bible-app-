@@ -12,12 +12,16 @@ export const metadata = { title: "Sign in · Lumen" };
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ demo?: string }>;
+  searchParams?: Promise<{ demo?: string; next?: string }>;
 }) {
   await ensureSeeded().catch(() => undefined);
-  const user = await getSessionUser();
-  if (user) redirect("/dashboard");
   const params = searchParams ? await searchParams : {};
+  const nextPath =
+    params.next && params.next.startsWith("/") && !params.next.startsWith("//")
+      ? params.next
+      : "/dashboard";
+  const user = await getSessionUser();
+  if (user) redirect(nextPath);
   const initialError =
     params.demo === "missing"
       ? "Demo household could not be loaded. Please verify DATABASE_URL and database connectivity."
@@ -30,7 +34,7 @@ export default async function LoginPage({
       </div>
       <div className="flex items-center justify-center bg-parchment px-5 py-12 sm:px-10">
         <div className="w-full max-w-md">
-          <AuthForm mode="signin" initialError={initialError} />
+          <AuthForm mode="signin" initialError={initialError} nextPath={nextPath} />
         </div>
       </div>
     </main>
